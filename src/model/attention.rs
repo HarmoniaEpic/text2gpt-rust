@@ -65,10 +65,13 @@ impl CausalSelfAttention {
         // Then transpose to [b, 3, n_head, t, head_dim]
         let qkv = qkv.transpose(2, 3)?;
         
-        // Extract q, k, v
-        let q = qkv.narrow(1, 0, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
-        let k = qkv.narrow(1, 1, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
-        let v = qkv.narrow(1, 2, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
+        // Make contiguous after transposes
+        let qkv = qkv.contiguous()?;
+        
+        // Extract q, k, v and make them contiguous
+        let q = qkv.narrow(1, 0, 1)?.squeeze(1)?.contiguous()?; // [b, n_head, t, head_dim]
+        let k = qkv.narrow(1, 1, 1)?.squeeze(1)?.contiguous()?; // [b, n_head, t, head_dim]
+        let v = qkv.narrow(1, 2, 1)?.squeeze(1)?.contiguous()?; // [b, n_head, t, head_dim]
         
         // Attention scores
         let head_dim = c / self.n_head;
@@ -76,7 +79,8 @@ impl CausalSelfAttention {
         
         // Use explicit broadcast for scaling
         let scale_tensor = Tensor::new(scale as f32, x.device())?;
-        let att = q.matmul(&k.transpose(D::Minus2, D::Minus1)?)?
+        let k_t = k.transpose(D::Minus2, D::Minus1)?.contiguous()?;
+        let att = q.matmul(&k_t)?
             .broadcast_mul(&scale_tensor)?;
         
         // Apply causal mask - Fixed implementation

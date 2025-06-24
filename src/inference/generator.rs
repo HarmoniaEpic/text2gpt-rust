@@ -1,5 +1,5 @@
 use anyhow::Result;
-use candle_core::{Device, Tensor};
+use candle_core::{Device, IndexOp, Tensor};
 use std::path::Path;
 
 use crate::config::Config;

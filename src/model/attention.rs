@@ -54,12 +54,21 @@ impl CausalSelfAttention {
         
         // Calculate query, key, values for all heads in batch
         let qkv = self.c_attn.forward(x)?;
-        let qkv = qkv.reshape((b, t, 3, self.n_head, c / self.n_head))?;
-        let qkv = qkv.transpose(1, 2)?; // (B, 3, num_heads, T, head_dim)
         
-        let q = qkv.narrow(1, 0, 1)?.squeeze(1)?;
-        let k = qkv.narrow(1, 1, 1)?.squeeze(1)?;
-        let v = qkv.narrow(1, 2, 1)?.squeeze(1)?;
+        // Reshape to separate q, k, v
+        // From [b, t, 3 * n_embd] to [b, t, 3, n_head, head_dim]
+        let qkv = qkv.reshape((b, t, 3, self.n_head, c / self.n_head))?;
+        
+        // Permute to [b, 3, n_head, t, head_dim]
+        // First transpose to [b, 3, t, n_head, head_dim]
+        let qkv = qkv.transpose(1, 2)?;
+        // Then transpose to [b, 3, n_head, t, head_dim]
+        let qkv = qkv.transpose(2, 3)?;
+        
+        // Extract q, k, v
+        let q = qkv.narrow(1, 0, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
+        let k = qkv.narrow(1, 1, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
+        let v = qkv.narrow(1, 2, 1)?.squeeze(1)?; // [b, n_head, t, head_dim]
         
         // Attention scores
         let head_dim = c / self.n_head;
@@ -105,8 +114,13 @@ impl CausalSelfAttention {
         };
         
         // Attention output
-        let y = att.matmul(&v)?;
-        let y = y.transpose(1, 2)?.contiguous()?.reshape((b, t, c))?;
+        let y = att.matmul(&v)?; // [b, n_head, t, head_dim]
+        
+        // Transpose back to [b, t, n_head, head_dim]
+        let y = y.transpose(1, 2)?;
+        
+        // Reshape to [b, t, c]
+        let y = y.contiguous()?.reshape((b, t, c))?;
         
         // Output projection
         let y = self.c_proj.forward(&y)?;

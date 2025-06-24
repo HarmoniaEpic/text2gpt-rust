@@ -8,8 +8,8 @@ pub struct CausalSelfAttention {
     n_head: usize,
     n_embd: usize,
     bias: Tensor,
-    attn_dropout_p: f32,  // Changed from f64 to f32
-    resid_dropout_p: f32, // Changed from f64 to f32
+    attn_dropout_p: f32,
+    resid_dropout_p: f32,
 }
 
 impl CausalSelfAttention {
@@ -44,8 +44,8 @@ impl CausalSelfAttention {
             n_head,
             n_embd,
             bias,
-            attn_dropout_p: 0.1_f32,   // Changed to f32
-            resid_dropout_p: 0.1_f32,  // Changed to f32
+            attn_dropout_p: 0.1_f32,
+            resid_dropout_p: 0.1_f32,
         })
     }
     
@@ -70,16 +70,29 @@ impl CausalSelfAttention {
         let att = q.matmul(&k.transpose(D::Minus2, D::Minus1)?)?
             .broadcast_mul(&scale_tensor)?;
         
-        // Apply causal mask
-        let mask = &self.bias.narrow(2, 0, t)?.narrow(3, 0, t)?;
-        let mask = mask.broadcast_as(att.shape())?;
+        // Apply causal mask - Fixed implementation
+        // First, extract the relevant portion of the mask
+        let mask = self.bias.narrow(2, 0, t)?.narrow(3, 0, t)?;
+        
+        // Step-by-step broadcasting to match attention shape [b, n_head, t, t]
+        // Current mask shape: [1, 1, t, t]
+        // Target shape: [b, n_head, t, t]
+        
+        // First expand batch dimension: [1, 1, t, t] -> [b, 1, t, t]
+        let mask = mask.expand(&[b, 1, t, t])?;
+        
+        // Then expand head dimension: [b, 1, t, t] -> [b, n_head, t, t]
+        let mask = mask.expand(&[b, self.n_head, t, t])?;
         
         // Create a tensor of negative infinity for masked positions
-        let mask_value = Tensor::new(f32::NEG_INFINITY, att.device())?.broadcast_as(att.shape())?;
+        let mask_value = Tensor::new(f32::NEG_INFINITY, att.device())?;
         
         // Apply mask: where mask is 0, use -inf, otherwise use att value
         let mask_cond = mask.eq(&Tensor::zeros_like(&mask)?)?;
-        let att = att.where_cond(&mask_cond, &mask_value)?;
+        let att = att.where_cond(
+            &mask_cond,
+            &mask_value.broadcast_as(att.shape())?
+        )?;
         
         // Softmax
         let att = ops::softmax_last_dim(&att)?;

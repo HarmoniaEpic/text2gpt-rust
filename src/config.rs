@@ -49,9 +49,9 @@ pub struct Config {
     
     // Training settings
     pub batch_size: usize,
-    pub learning_rate: f64,
+    pub learning_rate: f32,  // Changed from f64 to f32
     pub num_epochs: usize,
-    pub dropout: f64,
+    pub dropout: f32,        // Changed from f64 to f32
     
     // Data settings
     pub initial_tokens: usize,
@@ -86,9 +86,9 @@ impl Config {
             
             // Training settings
             batch_size: 2,
-            learning_rate: 3e-4,
+            learning_rate: 3e-4_f32,  // Changed to f32
             num_epochs: 20,
-            dropout: 0.1,
+            dropout: 0.1_f32,         // Changed to f32
             
             // Data settings
             initial_tokens: 2000,
@@ -183,7 +183,7 @@ pub struct GenerationInfo {
 pub struct TrainingParams {
     pub epochs: usize,
     pub batch_size: usize,
-    pub learning_rate: f64,
+    pub learning_rate: f32,  // Changed from f64 to f32
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

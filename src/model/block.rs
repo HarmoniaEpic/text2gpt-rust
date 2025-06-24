@@ -7,7 +7,7 @@ use super::attention::CausalSelfAttention;
 pub struct MLP {
     c_fc: Linear,
     c_proj: Linear,
-    dropout_p: f64,
+    dropout_p: f32,  // Changed from f64 to f32
 }
 
 impl MLP {
@@ -18,7 +18,7 @@ impl MLP {
         Ok(Self {
             c_fc,
             c_proj,
-            dropout_p: 0.1,
+            dropout_p: 0.1_f32,  // Changed to f32
         })
     }
     

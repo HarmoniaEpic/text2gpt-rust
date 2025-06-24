@@ -56,7 +56,7 @@ impl GPT {
         assert!(t <= self.n_positions, "Sequence length {} exceeds maximum {}", t, self.n_positions);
         
         // Token embeddings
-        let tok_emb = self.wte.forward(idx)?;
+        let tok_emb = self.wte.forward(idx)?; // [b, t, n_embd]
         
         // Position embeddings - Fixed to handle batch size properly
         let pos = Tensor::arange(0, t as i64, device)?
@@ -64,7 +64,7 @@ impl GPT {
             .expand(&[b, t])?;       // [1, t] → [b, t]
         let pos_emb = self.wpe.forward(&pos)?;  // [b, t, n_embd]
         
-        // Combine embeddings using explicit broadcast
+        // Combine embeddings using explicit broadcast_add
         let mut x = tok_emb.broadcast_add(&pos_emb)?;
         
         // Dropout (if training)
@@ -128,9 +128,10 @@ impl GPT {
             // Get logits for last position
             let logits = logits.i((.., logits.dims()[1] - 1, ..))?;
             
-            // Apply temperature
+            // Apply temperature using explicit broadcast
             let logits = if (temperature - 1.0).abs() > 1e-6 {
-                logits.broadcast_div(&Tensor::new(temperature as f32, logits.device())?)?
+                let temp_tensor = Tensor::new(temperature as f32, logits.device())?;
+                logits.broadcast_div(&temp_tensor)?
             } else {
                 logits
             };

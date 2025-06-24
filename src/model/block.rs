@@ -64,13 +64,13 @@ impl Block {
     }
     
     pub fn forward(&self, x: &Tensor, training: bool) -> Result<Tensor> {
-        // Attention block with residual connection
+        // Attention block with residual connection - using explicit broadcast
         let attn_out = self.attn.forward(&self.ln_1.forward(x)?, training)?;
-        let x = (x + attn_out)?;
+        let x = x.broadcast_add(&attn_out)?;
         
-        // MLP block with residual connection
+        // MLP block with residual connection - using explicit broadcast
         let mlp_out = self.mlp.forward(&self.ln_2.forward(&x)?, training)?;
-        let x = (x + mlp_out)?;
+        let x = x.broadcast_add(&mlp_out)?;
         
         Ok(x)
     }

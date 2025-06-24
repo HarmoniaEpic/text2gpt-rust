@@ -1,5 +1,5 @@
 use candle_core::{IndexOp, Result, Tensor, D};
-use candle_nn::{embedding, layer_norm, linear, ops, Embedding, LayerNorm, Module, VarBuilder};
+use candle_nn::{embedding, layer_norm, ops, Embedding, LayerNorm, Module, VarBuilder};
 use rand::{thread_rng, Rng};
 
 use super::block::Block;
@@ -9,7 +9,7 @@ use crate::config::Config;
 pub struct GPT {
     wte: Embedding,       // token embeddings
     wpe: Embedding,       // position embeddings
-    drop: f32,           // dropout probability (changed from f64)
+    drop: f32,           // dropout probability
     h: Vec<Block>,       // transformer blocks
     ln_f: LayerNorm,     // final layer norm
     n_positions: usize,
@@ -121,14 +121,14 @@ impl GPT {
                 idx.i((.., seq_len - self.n_positions..))?
             };
             
-            // Forward pass
+            // Forward pass (no training mode for generation)
             let (logits, _) = self.forward(&idx_cond, None, false)?;
             
             // Get logits for last position
             let logits = logits.i((.., logits.dims()[1] - 1, ..))?;
             
             // Apply temperature
-            let logits = if temperature != 1.0 {
+            let logits = if (temperature - 1.0).abs() > 1e-6 {
                 (logits / temperature)?
             } else {
                 logits
@@ -171,18 +171,17 @@ fn apply_top_k(logits: &Tensor, k: usize, device: &candle_core::Device) -> Resul
         .map(|(i, &v)| (i, v))
         .collect();
     
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     
     // Get threshold (k-th largest value)
-    let threshold = indexed[k - 1].1;
+    let threshold = indexed.get(k.saturating_sub(1))
+        .map(|(_, v)| *v)
+        .unwrap_or(f32::NEG_INFINITY);
     
     // Create filtered logits
-    let mut result = vec![f32::NEG_INFINITY; vocab_size];
-    for (idx, val) in logits_vec.iter().enumerate() {
-        if *val >= threshold {
-            result[idx] = *val;
-        }
-    }
+    let result: Vec<f32> = logits_vec.iter()
+        .map(|&val| if val >= threshold { val } else { f32::NEG_INFINITY })
+        .collect();
     
     // Convert back to tensor
     Tensor::from_vec(result, logits.shape(), device)
@@ -195,21 +194,16 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
     // Convert to vector for sampling
     let probs_vec: Vec<f32> = probs.squeeze(0)?.to_vec1()?;
     
-    // Build cumulative distribution
-    let mut cumsum = vec![0.0];
-    let mut sum = 0.0;
-    
-    for &p in &probs_vec {
-        sum += p;
-        cumsum.push(sum);
-    }
-    
-    // Sample
+    // Generate random value
     let sample: f32 = rng.gen();
+    
+    // Build cumulative distribution and sample
+    let mut cumsum = 0.0;
     let mut idx = 0;
     
-    for i in 0..probs_vec.len() {
-        if sample <= cumsum[i + 1] {
+    for (i, &p) in probs_vec.iter().enumerate() {
+        cumsum += p;
+        if sample <= cumsum {
             idx = i;
             break;
         }

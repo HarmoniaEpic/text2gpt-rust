@@ -58,12 +58,14 @@ impl GPT {
         // Token embeddings
         let tok_emb = self.wte.forward(idx)?;
         
-        // Position embeddings
-        let pos = Tensor::arange(0, t as i64, device)?.unsqueeze(0)?;
-        let pos_emb = self.wpe.forward(&pos)?;
+        // Position embeddings - Fixed to handle batch size properly
+        let pos = Tensor::arange(0, t as i64, device)?
+            .unsqueeze(0)?           // [t] → [1, t]
+            .expand(&[b, t])?;       // [1, t] → [b, t]
+        let pos_emb = self.wpe.forward(&pos)?;  // [b, t, n_embd]
         
-        // Combine embeddings
-        let mut x = (tok_emb + pos_emb)?;
+        // Combine embeddings using explicit broadcast
+        let mut x = tok_emb.broadcast_add(&pos_emb)?;
         
         // Dropout (if training)
         if training && self.drop > 0.0 {
@@ -128,7 +130,7 @@ impl GPT {
             
             // Apply temperature
             let logits = if (temperature - 1.0).abs() > 1e-6 {
-                (logits / temperature)?
+                logits.broadcast_div(&Tensor::new(temperature as f32, logits.device())?)?
             } else {
                 logits
             };
@@ -195,7 +197,7 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
     let probs_vec: Vec<f32> = probs.squeeze(0)?.to_vec1()?;
     
     // Generate random value
-    let sample: f32 = rng.r#gen::<f32>();
+    let sample: f32 = rng.gen::<f32>();
     
     // Build cumulative distribution and sample
     let mut cumsum = 0.0;

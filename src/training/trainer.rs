@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use crate::config::{Config, DataStats, TrainingResult};
 use crate::data::{DataGenerationMethod, DataGenerator, DataRefiner, TextDataset};
-use crate::io::{json, safetensors};
+use crate::io::json;
 use crate::model::GPT;
 use crate::tokenizer::GPT2Tokenizer;
 
@@ -212,40 +212,13 @@ pub async fn run_full_pipeline(
 }
 
 /// Initialize model weights with proper values
-fn initialize_model_weights(varmap: &VarMap) -> Result<()> {
-    use candle_nn::init::Init;
-    
-    let vars = varmap.all_vars();
-    
-    for var in vars.iter() {
-        // Get the variable name from the var
-        let tensor = var.as_tensor();
-        
-        // Initialize based on the tensor shape and typical patterns
-        let shape = tensor.shape();
-        let dims = shape.dims();
-        
-        // Standard initialization for transformer models
-        let init = if dims.len() == 2 {
-            // Linear layers - Xavier/Glorot uniform initialization
-            Init::Uniform { 
-                lo: -0.02, 
-                up: 0.02 
-            }
-        } else if dims.len() == 1 {
-            // Bias terms
-            Init::Const(0.0)
-        } else {
-            // Embeddings and other multi-dimensional tensors
-            Init::Randn { 
-                mean: 0.0, 
-                stdev: 0.02 
-            }
-        };
-        
-        // Apply initialization
-        let _ = var.init(init);
-    }
+fn initialize_model_weights(_varmap: &VarMap) -> Result<()> {
+    // Note: In the current version of Candle, weights are automatically initialized
+    // when creating layers with VarBuilder. The initialization strategy depends on
+    // the layer type (e.g., Xavier/Kaiming for linear layers).
+    // 
+    // If custom initialization is needed, it should be done at layer creation time
+    // using VarBuilder's get_with_hints method.
     
     Ok(())
 }

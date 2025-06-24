@@ -1,16 +1,16 @@
 [package]
 name = "text2gpt1"
 version = "0.1.0"
-edition = "2021"
+edition = "2025"
 authors = ["Text2GPT1 Contributors"]
 description = "Generate custom GPT models from prompts using Rust and Candle"
 license = "MIT"
 
 [dependencies]
 # Core deep learning framework
-candle-core = "0.7.2"
-candle-nn = "0.7.2"
-candle-transformers = "0.7.2"
+candle-core = "0.8.4"
+candle-nn = "0.8.4"
+candle-transformers = "0.8.4"
 safetensors = "0.6.0"
 
 # CLI and UI

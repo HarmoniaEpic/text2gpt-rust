@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
-use candle_core::{DType, Device};
-use candle_nn::{AdamW, Optimizer, ParamsAdamW, VarBuilder};
+use candle_core::{DType, Device, Tensor};
+use candle_nn::{AdamW, Optimizer, ParamsAdamW, VarBuilder, VarMap};
 use chrono::Local;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::config::{Config, DataStats, TrainingResult};
@@ -52,11 +53,11 @@ pub async fn run_full_pipeline(
     
     let refined_samples = match &generation_method {
         DataGenerationMethod::Ollama { refine_model, .. } => {
-            refiner.refine_samples(raw_samples, config.final_tokens, true, refine_model).await
+            refiner.refine_samples(raw_samples.clone(), config.final_tokens, true, refine_model).await
                 .context("Failed to refine data samples with Ollama")?
         }
         DataGenerationMethod::Template => {
-            refiner.refine_samples(raw_samples, config.final_tokens, false, "").await
+            refiner.refine_samples(raw_samples.clone(), config.final_tokens, false, "").await
                 .context("Failed to refine data samples")?
         }
     };
@@ -72,17 +73,21 @@ pub async fn run_full_pipeline(
     
     println!("Dataset created with {} samples", dataset.len());
     
-    // Initialize model
+    // Initialize model with VarMap
     println!("\n{}", "[Step 4/7] Initializing model".bright_green());
-    let vb = VarBuilder::zeros(DType::F32, &device);
+    let varmap = Arc::new(VarMap::new());
+    let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
     let model = GPT::new(config, vb)
         .context("Failed to initialize GPT model")?;
+    
+    // Initialize weights properly
+    initialize_model_weights(&varmap)?;
     
     println!("Model initialized with {:.2}M parameters", config.param_count_millions());
     
     // Train model
     println!("\n{}", "[Step 5/7] Training model".bright_green());
-    train_model(&model, &dataset, config)
+    let final_loss = train_model(&model, &dataset, config, &varmap)
         .context("Failed during model training")?;
     
     // Test generation
@@ -100,6 +105,10 @@ pub async fn run_full_pipeline(
         timestamp
     );
     let folder_path = output_dir.join(&folder_name);
+    
+    // Create directory
+    std::fs::create_dir_all(&folder_path)
+        .context("Failed to create output directory")?;
     
     // Save dataset
     let dataset_metadata = json::DatasetMetadata {
@@ -135,19 +144,21 @@ pub async fn run_full_pipeline(
     json::save_dataset_text(folder_path.join("dataset.txt"), &refined_samples)
         .context("Failed to save dataset as text")?;
     
-    // Save model
-    let mut metadata = HashMap::new();
-    metadata.insert("prompt".to_string(), prompt.to_string());
-    metadata.insert("domain".to_string(), domain.clone());
-    metadata.insert("model_size".to_string(), config.model_size.to_string());
-    metadata.insert("vocab_size".to_string(), config.vocab_size.to_string());
-    metadata.insert("n_embd".to_string(), config.n_embd.to_string());
-    metadata.insert("n_layer".to_string(), config.n_layer.to_string());
-    metadata.insert("n_head".to_string(), config.n_head.to_string());
-    metadata.insert("n_positions".to_string(), config.n_positions.to_string());
+    // Save model using VarMap's save method
+    let model_path = folder_path.join("model.safetensors");
+    varmap.save(&model_path)
+        .context("Failed to save model weights")?;
     
-    safetensors::save_model_folder(&model, &tokenizer, config, &folder_path, metadata)
-        .context("Failed to save model and tokenizer")?;
+    // Save tokenizer
+    tokenizer.save_pretrained(&folder_path)
+        .context("Failed to save tokenizer")?;
+    
+    // Save config
+    let config_path = folder_path.join("config.json");
+    let config_json = serde_json::to_string_pretty(config)
+        .context("Failed to serialize config to JSON")?;
+    std::fs::write(&config_path, config_json)
+        .context("Failed to write config file")?;
     
     // Save generation info
     let data_stats = DataStats {
@@ -193,25 +204,70 @@ pub async fn run_full_pipeline(
     let result = TrainingResult {
         model_path: folder_path,
         domain,
-        final_loss: 0.0, // Would need to track this during training
+        final_loss,
         training_time_seconds: start_time.elapsed().as_secs_f64(),
     };
     
     Ok(result)
 }
 
-/// Train the model
+/// Initialize model weights with proper values
+fn initialize_model_weights(varmap: &VarMap) -> Result<()> {
+    use candle_nn::init::Init;
+    
+    let vars = varmap.all_vars();
+    
+    for var in vars.iter() {
+        // Get the variable name from the var
+        let tensor = var.as_tensor();
+        
+        // Initialize based on the tensor shape and typical patterns
+        let shape = tensor.shape();
+        let dims = shape.dims();
+        
+        // Standard initialization for transformer models
+        let init = if dims.len() == 2 {
+            // Linear layers - Xavier/Glorot uniform initialization
+            Init::Uniform { 
+                lo: -0.02, 
+                up: 0.02 
+            }
+        } else if dims.len() == 1 {
+            // Bias terms
+            Init::Const(0.0)
+        } else {
+            // Embeddings and other multi-dimensional tensors
+            Init::Randn { 
+                mean: 0.0, 
+                stdev: 0.02 
+            }
+        };
+        
+        // Apply initialization
+        let _ = var.init(init);
+    }
+    
+    Ok(())
+}
+
+/// Train the model using Candle's training pattern
 pub fn train_model(
     model: &GPT,
     dataset: &TextDataset,
     config: &Config,
-) -> Result<()> {
-    // Note: This is a simplified version. In a real implementation, you would need
-    // to properly extract trainable parameters from the model.
-    // For now, we'll create a placeholder that demonstrates the training loop structure.
+    varmap: &Arc<VarMap>,
+) -> Result<f32> {
+    // Initialize AdamW optimizer with all model parameters
+    let params = ParamsAdamW {
+        lr: config.learning_rate as f64,
+        beta1: 0.9,
+        beta2: 0.999,
+        eps: 1e-8,
+        weight_decay: 0.01,
+    };
     
-    println!("Note: Training implementation requires access to model parameters.");
-    println!("This is a placeholder implementation for demonstration purposes.");
+    let mut optimizer = AdamW::new(varmap.all_vars(), params)
+        .context("Failed to create AdamW optimizer")?;
     
     let mut dataloader = dataset.dataloader(config.batch_size, true);
     
@@ -226,6 +282,7 @@ pub fn train_model(
     
     let mut step = 0;
     let mut recent_losses = Vec::new();
+    let mut final_loss = 0.0;
     
     for epoch in 0..config.num_epochs {
         let mut epoch_loss = 0.0;
@@ -240,12 +297,10 @@ pub fn train_model(
             let (_logits, loss) = model.forward(&x, Some(&y), true)?;
             
             if let Some(loss_tensor) = loss {
-                // In a real implementation, you would:
-                // 1. Call loss.backward() to compute gradients
-                // 2. Use an optimizer to update weights
-                // 3. Clear gradients
+                // Backward pass and parameter update - key Candle pattern
+                optimizer.backward_step(&loss_tensor)?;
                 
-                // For now, just track the loss
+                // Track loss
                 let loss_val = loss_tensor.to_scalar::<f32>()?;
                 epoch_loss += loss_val;
                 num_batches += 1;
@@ -259,6 +314,8 @@ pub fn train_model(
                 
                 pb.set_position(step as u64);
                 pb.set_message(format!("{:.4}", smoothed_loss));
+                
+                final_loss = smoothed_loss;
             }
             
             step += 1;
@@ -276,12 +333,14 @@ pub fn train_model(
                 config.learning_rate
             ));
         }
+        
+        // Optional: Learning rate scheduling could be added here
+        // For example: optimizer.set_learning_rate(new_lr);
     }
     
-    pb.finish_with_message(format!("Training complete - Final loss: {:.4}", 
-        recent_losses.iter().sum::<f32>() / recent_losses.len() as f32));
+    pb.finish_with_message(format!("Training complete - Final loss: {:.4}", final_loss));
     
-    Ok(())
+    Ok(final_loss)
 }
 
 /// Test the model with some generations
@@ -296,6 +355,7 @@ fn test_generation(
         "Today",
     ];
     
+    println!("\nTest generations:");
     for (i, prompt) in test_prompts.iter().enumerate() {
         let start_ids = if prompt.is_empty() {
             vec![tokenizer.bos_token_id()]
@@ -303,7 +363,7 @@ fn test_generation(
             tokenizer.encode(prompt)?
         };
         
-        let input = candle_core::Tensor::new(start_ids.as_slice(), device)?.unsqueeze(0)?;
+        let input = Tensor::new(start_ids.as_slice(), device)?.unsqueeze(0)?;
         let generated = model.generate(&input, 30, 0.8, Some(40))?;
         
         let generated_ids: Vec<u32> = generated.squeeze(0)?.to_vec1::<i64>()?

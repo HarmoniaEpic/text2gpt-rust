@@ -83,29 +83,24 @@ impl CausalSelfAttention {
         let att = q.matmul(&k_t)?
             .broadcast_mul(&scale_tensor)?;
         
-        // Apply causal mask - Fixed implementation
-        // First, extract the relevant portion of the mask
+        // Apply causal mask
+        // Extract the relevant portion of the mask
         let mask = self.bias.narrow(2, 0, t)?.narrow(3, 0, t)?;
         
-        // Step-by-step broadcasting to match attention shape [b, n_head, t, t]
-        // Current mask shape: [1, 1, t, t]
-        // Target shape: [b, n_head, t, t]
-        
-        // First expand batch dimension: [1, 1, t, t] -> [b, 1, t, t]
-        let mask = mask.expand(&[b, 1, t, t])?;
-        
-        // Then expand head dimension: [b, 1, t, t] -> [b, n_head, t, t]
+        // Expand mask to match attention shape [b, n_head, t, t]
         let mask = mask.expand(&[b, self.n_head, t, t])?;
         
-        // Create a tensor of negative infinity for masked positions
-        let mask_value = Tensor::new(f32::NEG_INFINITY, att.device())?;
+        // Create attention mask: where mask is 0, use large negative value
+        // This is the standard transformer approach
+        let mask_value = -1e10_f32;
         
-        // Apply mask: where mask is 0, use -inf, otherwise use att value
-        let mask_cond = mask.eq(&Tensor::zeros_like(&mask)?)?;
-        let att = att.where_cond(
-            &mask_cond,
-            &mask_value.broadcast_as(att.shape())?
-        )?;
+        // Apply: att = att + mask_value * (1 - mask)
+        // Where mask is 1 (allowed), add 0
+        // Where mask is 0 (masked), add mask_value
+        let ones = Tensor::ones(mask.shape(), mask.dtype(), mask.device())?;
+        let inv_mask = ones.broadcast_sub(&mask)?;
+        let mask_add = inv_mask.broadcast_mul(&Tensor::new(mask_value, att.device())?)?;
+        let att = att.broadcast_add(&mask_add)?;
         
         // Softmax
         let att = ops::softmax_last_dim(&att)?;

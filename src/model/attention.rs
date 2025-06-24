@@ -64,7 +64,11 @@ impl CausalSelfAttention {
         // Attention scores
         let head_dim = c / self.n_head;
         let scale = 1.0 / (head_dim as f64).sqrt();
-        let att = (q.matmul(&k.transpose(D::Minus2, D::Minus1)?)? * scale)?;
+        
+        // Use explicit broadcast for scaling
+        let scale_tensor = Tensor::new(scale as f32, x.device())?;
+        let att = q.matmul(&k.transpose(D::Minus2, D::Minus1)?)?
+            .broadcast_mul(&scale_tensor)?;
         
         // Apply causal mask
         let mask = &self.bias.narrow(2, 0, t)?.narrow(3, 0, t)?;

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -66,11 +66,12 @@ impl DataRefiner {
         let mut refined_samples = Vec::new();
         let mut current_tokens = 0;
         
-        for (score, sample) in scored_samples {
-            let sample_tokens = self.tokenizer.encode(&sample)?.len();
+        // Use reference to avoid move
+        for (_score, sample) in &scored_samples {
+            let sample_tokens = self.tokenizer.encode(sample)?.len();
             
             if current_tokens + sample_tokens <= target_tokens {
-                refined_samples.push(sample);
+                refined_samples.push(sample.clone());
                 current_tokens += sample_tokens;
             }
             

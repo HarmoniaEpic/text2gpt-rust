@@ -217,14 +217,12 @@ CUDA_VISIBLE_DEVICES="" text2gpt1 generate --prompt "..."
 
 ## 🙏 謝辞
 
-- オリジナルのPython版Text2GPT1の作者
 - [Candle](https://github.com/huggingface/candle)プロジェクト
 - [HuggingFace Tokenizers](https://github.com/huggingface/tokenizers)
 - [Ollama](https://ollama.ai/)コミュニティ
 
 ## 📚 関連リンク
 
-- [Python版 Text2GPT1](https://github.com/example/text2gpt1)
 - [Candle Documentation](https://github.com/huggingface/candle)
 - [Rust Book](https://doc.rust-lang.org/book/)
 - [GPT論文](https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf)

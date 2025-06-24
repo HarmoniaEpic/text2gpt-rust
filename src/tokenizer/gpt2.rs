@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokenizers::tokenizer::Tokenizer;
 
 /// GPT2 Tokenizer wrapper

@@ -84,9 +84,27 @@ impl GPT {
         // GPT-1/GPT-2 architecture uses weight sharing between input embeddings (wte) 
         // and output projection layer. This reduces parameters by vocab_size * n_embd.
         
-        // Get the embedding weight tensor and compute logits
+        // Get the embedding weight tensor and ensure it's in the right shape
         let wte_weight = self.wte.embeddings();
-        let logits = x.matmul(&wte_weight.t()?)?;
+        
+        // Reshape approach for safer matmul
+        let (b, t, _) = x.dims3()?;
+        
+        // Flatten x to 2D for matmul: [b*t, n_embd]
+        let x_flat = x.reshape((b * t, self.n_embd))?;
+        
+        // Ensure weight is transposed correctly: [n_embd, vocab_size]
+        let wte_weight_t = if wte_weight.dims() == &[self.vocab_size, self.n_embd] {
+            wte_weight.transpose(0, 1)?.contiguous()?
+        } else {
+            wte_weight.contiguous()?
+        };
+        
+        // Perform matmul: [b*t, n_embd] @ [n_embd, vocab_size] = [b*t, vocab_size]
+        let logits_flat = x_flat.matmul(&wte_weight_t)?;
+        
+        // Reshape back to 3D: [b, t, vocab_size]
+        let logits = logits_flat.reshape((b, t, self.vocab_size))?;
         
         // Calculate loss if targets provided
         let loss = if let Some(targets) = targets {

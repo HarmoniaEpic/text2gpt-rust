@@ -1,7 +1,6 @@
-use candle_core::{DType, Device, IndexOp, Result, Tensor, D};
-use candle_nn::{embedding, layer_norm, ops, Embedding, LayerNorm, Module, VarBuilder, VarMap};
+use candle_core::{IndexOp, Result, Tensor, D};
+use candle_nn::{embedding, layer_norm, linear, ops, Embedding, LayerNorm, Module, VarBuilder};
 use rand::{thread_rng, Rng};
-use std::sync::Arc;
 
 use super::block::Block;
 use crate::config::Config;
@@ -10,20 +9,17 @@ use crate::config::Config;
 pub struct GPT {
     wte: Embedding,       // token embeddings
     wpe: Embedding,       // position embeddings
-    drop: f64,           // dropout probability
+    drop: f32,           // dropout probability (changed from f64)
     h: Vec<Block>,       // transformer blocks
     ln_f: LayerNorm,     // final layer norm
     n_positions: usize,
-    device: Device,
-    varmap: Arc<VarMap>, // Reference to VarMap for weight access
+    vocab_size: usize,
+    n_embd: usize,
 }
 
 impl GPT {
     /// Create a new GPT model
     pub fn new(config: &Config, vb: VarBuilder) -> Result<Self> {
-        // Get the VarMap reference
-        let varmap = vb.varmap().clone();
-        
         let wte = embedding(config.vocab_size, config.n_embd, vb.pp("wte"))?;
         let wpe = embedding(config.n_positions, config.n_embd, vb.pp("wpe"))?;
         
@@ -33,15 +29,13 @@ impl GPT {
                 config.n_embd,
                 config.n_head,
                 config.n_positions,
-                vb.pp(format!("h.{}", i)),
+                vb.pp(&format!("h.{}", i)),
             )?);
         }
         
         let ln_f = layer_norm(config.n_embd, 1e-5, vb.pp("ln_f"))?;
         
-        // Create lm_head with weight sharing
-        // In GPT-1/2, lm_head shares weights with wte (transposed)
-        let lm_head = linear(config.n_embd, config.vocab_size, vb.pp("lm_head"))?;
+        // Note: lm_head is not created separately as we use weight sharing with wte
         
         Ok(Self {
             wte,
@@ -49,51 +43,15 @@ impl GPT {
             drop: config.dropout,
             h,
             ln_f,
-            lm_head,
             n_positions: config.n_positions,
-            device: vb.device().clone(),
-            varmap: Arc::new(varmap),
+            vocab_size: config.vocab_size,
+            n_embd: config.n_embd,
         })
-    }
-
-    
-    /// Get reference to VarMap
-    pub fn varmap(&self) -> &VarMap {
-        &self.varmap
-    }
-    
-    /// Initialize model weights
-    pub fn init_weights(varmap: &VarMap) {
-        for (name, var) in varmap.all_vars().iter() {
-            let tensor = var.as_tensor();
-            
-            // Initialize weights based on layer type
-            if name.contains("c_attn") || name.contains("c_proj") || name.contains("c_fc") {
-                // Linear layers: normal initialization
-                let _ = tensor.init(candle_nn::init::Init::Randn { 
-                    mean: 0.0, 
-                    stdev: 0.02 
-                });
-            } else if name.contains("ln") {
-                // LayerNorm: ones for weight, zeros for bias
-                if name.ends_with(".weight") {
-                    let _ = tensor.init(candle_nn::init::Init::Const(1.0));
-                } else if name.ends_with(".bias") {
-                    let _ = tensor.init(candle_nn::init::Init::Const(0.0));
-                }
-            } else if name.contains("wte") || name.contains("wpe") {
-                // Embeddings: normal initialization
-                let _ = tensor.init(candle_nn::init::Init::Randn { 
-                    mean: 0.0, 
-                    stdev: 0.02 
-                });
-            }
-            // Note: lm_head initialization removed as we use weight sharing with wte
-        }
     }
     
     /// Forward pass
     pub fn forward(&self, idx: &Tensor, targets: Option<&Tensor>, training: bool) -> Result<(Tensor, Option<Tensor>)> {
+        let device = idx.device();
         let (b, t) = idx.dims2()?;
         assert!(t <= self.n_positions, "Sequence length {} exceeds maximum {}", t, self.n_positions);
         
@@ -101,7 +59,7 @@ impl GPT {
         let tok_emb = self.wte.forward(idx)?;
         
         // Position embeddings
-        let pos = Tensor::arange(0, t as i64, &self.device)?.unsqueeze(0)?;
+        let pos = Tensor::arange(0, t as i64, device)?.unsqueeze(0)?;
         let pos_emb = self.wpe.forward(&pos)?;
         
         // Combine embeddings
@@ -120,25 +78,17 @@ impl GPT {
         // Final layer norm
         x = self.ln_f.forward(&x)?;
         
-        // Language modeling head
+        // Language modeling head with weight sharing
         // GPT-1/GPT-2 architecture uses weight sharing between input embeddings (wte) 
         // and output projection layer. This reduces parameters by vocab_size * n_embd.
-        // Instead of having a separate lm_head layer, we use the embedding matrix directly.
         
-        // Get the embedding weight tensor
-        let embed_weight = self.varmap.get("wte.weight")
-            .ok_or_else(|| candle_core::Error::Msg("wte.weight not found in varmap".to_string()))?
-            .as_tensor();
-        
-        // Compute logits: x @ embed_weight.T
-        // x shape: (batch, seq_len, n_embd)
-        // embed_weight shape: (vocab_size, n_embd)
-        // result shape: (batch, seq_len, vocab_size)
-        let logits = x.matmul(&embed_weight.t()?)?;
+        // Get the embedding weight tensor and compute logits
+        let wte_weight = self.wte.embeddings();
+        let logits = x.matmul(&wte_weight.t()?)?;
         
         // Calculate loss if targets provided
         let loss = if let Some(targets) = targets {
-            let logits_view = logits.reshape((b * t, logits.dims()[2]))?;
+            let logits_view = logits.reshape((b * t, self.vocab_size))?;
             let targets_view = targets.reshape((b * t,))?;
             
             let loss = candle_nn::loss::cross_entropy(&logits_view, &targets_view)?;
@@ -159,6 +109,7 @@ impl GPT {
         top_k: Option<usize>,
     ) -> Result<Tensor> {
         let mut idx = idx.clone();
+        let device = idx.device();
         let mut rng = thread_rng();
         
         for _ in 0..max_new_tokens {
@@ -185,7 +136,7 @@ impl GPT {
             
             // Apply top-k filtering if specified
             let logits = if let Some(k) = top_k {
-                apply_top_k(&logits, k)?
+                apply_top_k(&logits, k, device)?
             } else {
                 logits
             };
@@ -205,37 +156,46 @@ impl GPT {
 }
 
 /// Apply top-k filtering to logits
-fn apply_top_k(logits: &Tensor, k: usize) -> Result<Tensor> {
+fn apply_top_k(logits: &Tensor, k: usize, device: &candle_core::Device) -> Result<Tensor> {
     let vocab_size = logits.dims()[logits.dims().len() - 1];
     if k >= vocab_size {
         return Ok(logits.clone());
     }
     
-    // Get top-k values and indices
-    let (topk_values, _topk_indices) = logits.topk(k, D::Minus1, true, true)?;
+    // Get logits as vector
+    let logits_vec: Vec<f32> = logits.squeeze(0)?.to_vec1()?;
     
-    // Get the k-th largest value (threshold)
-    let threshold = topk_values.i((.., k - 1))?.unsqueeze(D::Minus1)?;
+    // Create indexed pairs and sort
+    let mut indexed: Vec<(usize, f32)> = logits_vec.iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v))
+        .collect();
     
-    // Create mask for values below threshold
-    let mask = logits.ge(&threshold)?;
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     
-    // Apply mask (set values below threshold to -inf)
-    let filtered = logits.where_cond(
-        &mask,
-        &logits,
-        &Tensor::new(f32::NEG_INFINITY, logits.device())?.broadcast_as(logits.shape())?,
-    )?;
+    // Get threshold (k-th largest value)
+    let threshold = indexed[k - 1].1;
     
-    Ok(filtered)
+    // Create filtered logits
+    let mut result = vec![f32::NEG_INFINITY; vocab_size];
+    for (idx, val) in logits_vec.iter().enumerate() {
+        if *val >= threshold {
+            result[idx] = *val;
+        }
+    }
+    
+    // Convert back to tensor
+    Tensor::from_vec(result, logits.shape(), device)
 }
 
 /// Sample an index from probability distribution
 fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
-    // For now, we'll use a simple implementation
-    // In practice, you might want to use a more efficient method
+    let device = probs.device();
     
+    // Convert to vector for sampling
     let probs_vec: Vec<f32> = probs.squeeze(0)?.to_vec1()?;
+    
+    // Build cumulative distribution
     let mut cumsum = vec![0.0];
     let mut sum = 0.0;
     
@@ -244,6 +204,7 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
         cumsum.push(sum);
     }
     
+    // Sample
     let sample: f32 = rng.gen();
     let mut idx = 0;
     
@@ -254,5 +215,5 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
         }
     }
     
-    Tensor::new(&[idx as i64], probs.device())
+    Tensor::new(&[idx as i64], device)
 }

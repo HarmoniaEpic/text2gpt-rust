@@ -1,4 +1,4 @@
-use candle_core::{DType, Device, Result, Tensor, D};
+use candle_core::{Result, Tensor, D};
 use candle_nn::{linear, ops, Linear, Module, VarBuilder};
 
 /// Causal self-attention layer
@@ -8,8 +8,8 @@ pub struct CausalSelfAttention {
     n_head: usize,
     n_embd: usize,
     bias: Tensor,
-    attn_dropout_p: f64,
-    resid_dropout_p: f64,
+    attn_dropout_p: f32,  // Changed from f64 to f32
+    resid_dropout_p: f32, // Changed from f64 to f32
 }
 
 impl CausalSelfAttention {
@@ -44,8 +44,8 @@ impl CausalSelfAttention {
             n_head,
             n_embd,
             bias,
-            attn_dropout_p: 0.1,
-            resid_dropout_p: 0.1,
+            attn_dropout_p: 0.1_f32,   // Changed to f32
+            resid_dropout_p: 0.1_f32,  // Changed to f32
         })
     }
     
@@ -62,17 +62,20 @@ impl CausalSelfAttention {
         let v = qkv.narrow(1, 2, 1)?.squeeze(1)?;
         
         // Attention scores
-        let scale = 1.0 / (k.dims()[D::Minus1] as f64).sqrt();
+        let head_dim = c / self.n_head;
+        let scale = 1.0 / (head_dim as f64).sqrt();
         let att = (q.matmul(&k.transpose(D::Minus2, D::Minus1)?)? * scale)?;
         
         // Apply causal mask
         let mask = &self.bias.narrow(2, 0, t)?.narrow(3, 0, t)?;
         let mask = mask.broadcast_as(att.shape())?;
-        let att = att.where_cond(
-            &mask.eq(&Tensor::zeros_like(&mask)?),
-            &Tensor::new(f32::NEG_INFINITY, att.device())?.broadcast_as(att.shape())?,
-            &att,
-        )?;
+        
+        // Create a tensor of negative infinity for masked positions
+        let mask_value = Tensor::new(f32::NEG_INFINITY, att.device())?.broadcast_as(att.shape())?;
+        
+        // Apply mask: where mask is 0, use -inf, otherwise use att value
+        let mask_cond = mask.eq(&Tensor::zeros_like(&mask)?)?;
+        let att = att.where_cond(&mask_cond, &mask_value)?;
         
         // Softmax
         let att = ops::softmax_last_dim(&att)?;

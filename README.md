@@ -1,3 +1,7 @@
+# 工事中 / Under Construction
+
+動かないかもしれません。 / It may not work.
+
 # Text2GPT1-Rust 🦀
 
 プロンプトから特定の性質を持つGPTモデルを自動生成するツール - Rust + Candle実装版

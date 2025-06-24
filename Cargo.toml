@@ -1,0 +1,44 @@
+[package]
+name = "text2gpt1"
+version = "0.1.0"
+edition = "2021"
+authors = ["Text2GPT1 Contributors"]
+description = "Generate custom GPT models from prompts using Rust and Candle"
+license = "MIT"
+
+[dependencies]
+# Core deep learning framework
+candle-core = "0.7.2"
+candle-nn = "0.7.2"
+candle-transformers = "0.7.2"
+safetensors = "0.6.0"
+
+# CLI and UI
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+indicatif = "0.17"
+colored = "2"
+
+# Data processing
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+
+# Tokenizer
+tokenizers = { version = "0.19", features = ["http"] }
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+chrono = "0.4"
+rand = "0.8"
+rayon = "1.8"
+dirs = "5"
+env_logger = "0.10"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

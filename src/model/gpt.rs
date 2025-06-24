@@ -197,7 +197,7 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
     let probs_vec: Vec<f32> = probs.squeeze(0)?.to_vec1()?;
     
     // Generate random value
-    let sample: f32 = rng.gen::<f32>();
+    let sample: f32 = rng.r#gen::<f32>();
     
     // Build cumulative distribution and sample
     let mut cumsum = 0.0;

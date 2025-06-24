@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use candle_core::{DType, Device};
 use candle_nn::{VarBuilder, VarMap};
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ pub fn load_model<P: AsRef<Path>>(
     };
     
     // Create VarMap and load weights
-    let varmap = VarMap::new();
+    let mut varmap = VarMap::new();
     let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
     
     // Create model structure
@@ -175,7 +175,7 @@ pub fn load_model_sharded<P: AsRef<Path>>(
 }
 
 /// Try to load config from safetensors metadata
-fn load_config_from_safetensors<P: AsRef<Path>>(path: P) -> Result<Config> {
+fn load_config_from_safetensors<P: AsRef<Path>>(_path: P) -> Result<Config> {
     // For now, we'll assume a default config since metadata access is limited
     // In production, you would save the config separately as JSON
     let config = Config::default();

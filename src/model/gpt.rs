@@ -1,4 +1,4 @@
-use candle_core::{IndexOp, Result, Tensor, D};
+use candle_core::{IndexOp, Result, Tensor};
 use candle_nn::{embedding, layer_norm, ops, Embedding, LayerNorm, Module, VarBuilder};
 use rand::{thread_rng, Rng};
 
@@ -109,7 +109,6 @@ impl GPT {
         top_k: Option<usize>,
     ) -> Result<Tensor> {
         let mut idx = idx.clone();
-        let device = idx.device();
         let mut rng = thread_rng();
         
         for _ in 0..max_new_tokens {
@@ -136,6 +135,7 @@ impl GPT {
             
             // Apply top-k filtering if specified
             let logits = if let Some(k) = top_k {
+                let device = idx.device();
                 apply_top_k(&logits, k, device)?
             } else {
                 logits
@@ -148,7 +148,7 @@ impl GPT {
             let idx_next = sample_from_probs(&probs, &mut rng)?;
             
             // Append sampled index to the running sequence
-            idx = Tensor::cat(&[idx, idx_next.unsqueeze(0)?], 1)?;
+            idx = Tensor::cat(&[&idx, &idx_next.unsqueeze(0)?], 1)?;
         }
         
         Ok(idx)
@@ -195,7 +195,7 @@ fn sample_from_probs(probs: &Tensor, rng: &mut impl Rng) -> Result<Tensor> {
     let probs_vec: Vec<f32> = probs.squeeze(0)?.to_vec1()?;
     
     // Generate random value
-    let sample: f32 = rng.gen();
+    let sample: f32 = rng.gen::<f32>();
     
     // Build cumulative distribution and sample
     let mut cumsum = 0.0;

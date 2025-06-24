@@ -1,38 +1,25 @@
 use anyhow::{anyhow, Context, Result};
-use candle_core::{DType, Device, Tensor};
-use candle_nn::VarBuilder;
-use safetensors::{serialize, SafeTensors};
+use candle_core::{DType, Device};
+use candle_nn::{VarBuilder, VarMap};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::config::Config;
 use crate::model::GPT;
 use crate::tokenizer::GPT2Tokenizer;
 
-/// Save model in safetensors format
+/// Save model in safetensors format using VarMap
 pub fn save_model<P: AsRef<Path>>(
-    _model: &GPT,
-    config: &Config,
+    varmap: &VarMap,
     path: P,
-    metadata: HashMap<String, String>,
 ) -> Result<()> {
     let path = path.as_ref();
     
-    // Note: In a real implementation, we would need a way to extract tensors from the model
-    // For now, this is a placeholder that demonstrates the structure
-    // In practice, you might need to modify the GPT struct to store references to its tensors
-    
-    let tensors: HashMap<String, Tensor> = HashMap::new();
-    // TODO: Implement tensor extraction from model
-    
-    // Convert to safetensors format
-    let data = serialize(tensors, &Some(metadata))
-        .context("Failed to serialize model tensors to safetensors format")?;
-    
-    // Save to file
-    fs::write(path, data)
-        .with_context(|| format!("Failed to write model file: {}", path.display()))?;
+    // VarMap provides a direct save method that handles safetensors format
+    varmap.save(path)
+        .context("Failed to save model using VarMap")?;
     
     log::info!("Model saved to: {}", path.display());
     Ok(())
@@ -42,54 +29,71 @@ pub fn save_model<P: AsRef<Path>>(
 pub fn load_model<P: AsRef<Path>>(
     path: P,
     device: &Device,
+) -> Result<(GPT, Config, Arc<VarMap>)> {
+    let path = path.as_ref();
+    
+    // First, we need to load the config to know the model architecture
+    // Assuming config is saved alongside the model
+    let config_path = path.with_extension("json");
+    let config = if config_path.exists() {
+        let config_json = fs::read_to_string(&config_path)
+            .context("Failed to read config file")?;
+        serde_json::from_str(&config_json)
+            .context("Failed to parse config JSON")?
+    } else {
+        // Try to infer config from the safetensors metadata
+        load_config_from_safetensors(path)?
+    };
+    
+    // Create VarMap and load weights
+    let varmap = Arc::new(VarMap::new());
+    let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
+    
+    // Create model structure
+    let model = GPT::new(&config, vb)?;
+    
+    // Load weights into VarMap
+    varmap.load(path)
+        .context("Failed to load weights into VarMap")?;
+    
+    log::info!("Model loaded from: {}", path.display());
+    Ok((model, config, varmap))
+}
+
+/// Load model using memory-mapped safetensors (most efficient for large models)
+pub fn load_model_mmaped<P: AsRef<Path>>(
+    path: P,
+    device: &Device,
 ) -> Result<(GPT, Config)> {
     let path = path.as_ref();
     
-    // Read the file
-    let data = fs::read(path)
-        .with_context(|| format!("Failed to read model file: {}", path.display()))?;
-    let tensors = SafeTensors::deserialize(&data)
-        .context("Failed to deserialize safetensors data")?;
+    // Load config
+    let config_path = path.with_extension("json");
+    let config: Config = if config_path.exists() {
+        let config_json = fs::read_to_string(&config_path)?;
+        serde_json::from_str(&config_json)?
+    } else {
+        load_config_from_safetensors(path)?
+    };
     
-    // Extract config from metadata
-    let metadata_map = tensors.metadata()
-        .map_err(|e| anyhow!("Failed to get metadata: {}", e))?;
-    let config = config_from_metadata(&metadata_map)?;
+    // Use memory-mapped loading for efficiency
+    let vb = unsafe {
+        VarBuilder::from_mmaped_safetensors(&[path], DType::F32, device)?
+    };
     
-    // Convert tensors to HashMap
-    let mut tensor_map = HashMap::new();
-    for (name, view) in tensors.tensors() {
-        let shape = view.shape();
-        let dtype = match view.dtype() {
-            safetensors::Dtype::F32 => DType::F32,
-            safetensors::Dtype::F16 => DType::F16,
-            safetensors::Dtype::BF16 => DType::BF16,
-            _ => return Err(anyhow!("Unsupported dtype: {:?}", view.dtype())),
-        };
-        
-        // Create tensor from raw data
-        let data = view.data();
-        let tensor = Tensor::from_raw_buffer(data, dtype, shape, device)?;
-        tensor_map.insert(name.to_string(), tensor);
-    }
-    
-    // Create VarBuilder with the tensors
-    let vb = VarBuilder::from_tensors(tensor_map, DType::F32, device);
-    
-    // Create and load the model
+    // Create model
     let model = GPT::new(&config, vb)?;
     
-    log::info!("Model loaded from: {}", path.display());
+    log::info!("Model loaded (mmaped) from: {}", path.display());
     Ok((model, config))
 }
 
 /// Save complete model folder
 pub fn save_model_folder<P: AsRef<Path>>(
-    model: &GPT,
+    varmap: &VarMap,
     tokenizer: &GPT2Tokenizer,
     config: &Config,
     folder_path: P,
-    metadata: HashMap<String, String>,
 ) -> Result<()> {
     let folder_path = folder_path.as_ref();
     
@@ -97,9 +101,9 @@ pub fn save_model_folder<P: AsRef<Path>>(
     fs::create_dir_all(folder_path)
         .with_context(|| format!("Failed to create model directory: {}", folder_path.display()))?;
     
-    // Save model
+    // Save model weights using VarMap
     let model_path = folder_path.join("model.safetensors");
-    save_model(model, config, model_path, metadata)?;
+    save_model(varmap, &model_path)?;
     
     // Save tokenizer
     tokenizer.save_pretrained(folder_path)
@@ -120,7 +124,7 @@ pub fn save_model_folder<P: AsRef<Path>>(
 pub fn load_model_folder<P: AsRef<Path>>(
     folder_path: P,
     device: &Device,
-) -> Result<(GPT, GPT2Tokenizer, Config)> {
+) -> Result<(GPT, GPT2Tokenizer, Config, Arc<VarMap>)> {
     let folder_path = folder_path.as_ref();
     
     // Load config
@@ -133,51 +137,81 @@ pub fn load_model_folder<P: AsRef<Path>>(
     
     // Load model
     let model_path = folder_path.join("model.safetensors");
-    let (model, _) = load_model(model_path, device)?;
+    let (model, _, varmap) = load_model(&model_path, device)?;
     
     // Load tokenizer
     let tokenizer = GPT2Tokenizer::from_pretrained(folder_path)
         .context("Failed to load tokenizer")?;
     
     log::info!("Model folder loaded from: {}", folder_path.display());
-    Ok((model, tokenizer, config))
+    Ok((model, tokenizer, config, varmap))
 }
 
-/// Create config from metadata
-fn config_from_metadata(metadata: &HashMap<String, String>) -> Result<Config> {
+/// Load model from multiple safetensors files (for large models)
+pub fn load_model_sharded<P: AsRef<Path>>(
+    model_files: &[P],
+    config_path: P,
+    device: &Device,
+) -> Result<(GPT, Config)> {
+    // Load config
+    let config_json = fs::read_to_string(config_path.as_ref())?;
+    let config: Config = serde_json::from_str(&config_json)?;
+    
+    // Convert paths to string slices for VarBuilder
+    let file_paths: Vec<&Path> = model_files.iter()
+        .map(|p| p.as_ref())
+        .collect();
+    
+    // Use memory-mapped loading for multiple files
+    let vb = unsafe {
+        VarBuilder::from_mmaped_safetensors(&file_paths, DType::F32, device)?
+    };
+    
+    // Create model
+    let model = GPT::new(&config, vb)?;
+    
+    log::info!("Sharded model loaded from {} files", model_files.len());
+    Ok((model, config))
+}
+
+/// Try to load config from safetensors metadata
+fn load_config_from_safetensors<P: AsRef<Path>>(path: P) -> Result<Config> {
+    use safetensors::SafeTensors;
+    
+    let data = fs::read(path.as_ref())?;
+    let tensors = SafeTensors::deserialize(&data)?;
+    
+    // Access metadata
+    let metadata = tensors.metadata()
+        .map_err(|e| anyhow!("Failed to get metadata: {}", e))?;
+    
+    // Extract config from metadata
     let vocab_size = metadata.get("vocab_size")
         .ok_or_else(|| anyhow!("Missing vocab_size in metadata"))?
-        .parse::<usize>()
-        .context("Failed to parse vocab_size as usize")?;
+        .parse::<usize>()?;
     
     let n_embd = metadata.get("n_embd")
         .ok_or_else(|| anyhow!("Missing n_embd in metadata"))?
-        .parse::<usize>()
-        .context("Failed to parse n_embd as usize")?;
+        .parse::<usize>()?;
     
     let n_layer = metadata.get("n_layer")
         .ok_or_else(|| anyhow!("Missing n_layer in metadata"))?
-        .parse::<usize>()
-        .context("Failed to parse n_layer as usize")?;
+        .parse::<usize>()?;
     
     let n_head = metadata.get("n_head")
         .ok_or_else(|| anyhow!("Missing n_head in metadata"))?
-        .parse::<usize>()
-        .context("Failed to parse n_head as usize")?;
+        .parse::<usize>()?;
     
     let n_positions = metadata.get("n_positions")
-        .ok_or_else(|| anyhow!("Missing n_positions in metadata"))?
-        .parse::<usize>()
-        .context("Failed to parse n_positions as usize")?;
+        .unwrap_or(&"512".to_string())
+        .parse::<usize>()?;
     
-    let model_size = if n_embd == 384 && n_layer == 6 {
-        crate::config::ModelSize::Small
-    } else if n_embd == 512 && n_layer == 8 {
-        crate::config::ModelSize::Medium
-    } else if n_embd == 768 && n_layer == 12 {
-        crate::config::ModelSize::Large
-    } else {
-        return Err(anyhow!("Unknown model configuration"));
+    // Determine model size based on architecture
+    let model_size = match (n_embd, n_layer) {
+        (384, 6) => crate::config::ModelSize::Small,
+        (512, 8) => crate::config::ModelSize::Medium,
+        (768, 12) => crate::config::ModelSize::Large,
+        _ => return Err(anyhow!("Unknown model configuration: n_embd={}, n_layer={}", n_embd, n_layer)),
     };
     
     let mut config = Config::new(model_size, 42);
@@ -188,4 +222,67 @@ fn config_from_metadata(metadata: &HashMap<String, String>) -> Result<Config> {
     config.n_positions = n_positions;
     
     Ok(config)
+}
+
+/// Save model with metadata
+pub fn save_model_with_metadata<P: AsRef<Path>>(
+    varmap: &VarMap,
+    path: P,
+    config: &Config,
+    additional_metadata: HashMap<String, String>,
+) -> Result<()> {
+    // First save the model normally
+    varmap.save(path.as_ref())?;
+    
+    // Now we need to reload and add metadata
+    // This is a limitation of the current VarMap API
+    // In production, you might want to extend VarMap to support metadata directly
+    
+    // For now, we save metadata separately
+    let metadata_path = path.as_ref().with_extension("metadata.json");
+    let mut metadata = additional_metadata;
+    
+    // Add config information to metadata
+    metadata.insert("vocab_size".to_string(), config.vocab_size.to_string());
+    metadata.insert("n_embd".to_string(), config.n_embd.to_string());
+    metadata.insert("n_layer".to_string(), config.n_layer.to_string());
+    metadata.insert("n_head".to_string(), config.n_head.to_string());
+    metadata.insert("n_positions".to_string(), config.n_positions.to_string());
+    metadata.insert("model_size".to_string(), config.model_size.to_string());
+    
+    let metadata_json = serde_json::to_string_pretty(&metadata)?;
+    fs::write(&metadata_path, metadata_json)?;
+    
+    log::info!("Model with metadata saved to: {}", path.as_ref().display());
+    Ok(())
+}
+
+/// Utility function to inspect a safetensors file
+pub fn inspect_safetensors<P: AsRef<Path>>(path: P) -> Result<()> {
+    use safetensors::SafeTensors;
+    
+    let data = fs::read(path.as_ref())?;
+    let tensors = SafeTensors::deserialize(&data)?;
+    
+    println!("=== Safetensors File Inspection ===");
+    println!("File: {}", path.as_ref().display());
+    
+    // Print metadata
+    if let Ok(metadata) = tensors.metadata() {
+        println!("\nMetadata:");
+        for (key, value) in metadata {
+            println!("  {}: {}", key, value);
+        }
+    }
+    
+    // Print tensor information
+    println!("\nTensors:");
+    for (name, tensor_view) in tensors.tensors() {
+        let shape = tensor_view.shape();
+        let dtype = tensor_view.dtype();
+        let size = shape.iter().product::<usize>();
+        println!("  {} - Shape: {:?}, Dtype: {:?}, Size: {}", name, shape, dtype, size);
+    }
+    
+    Ok(())
 }

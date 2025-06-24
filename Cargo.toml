@@ -11,7 +11,7 @@ license = "MIT"
 candle-core = "0.8.4"
 candle-nn = "0.8.4"
 candle-transformers = "0.8.4"
-safetensors = "0.6.0"
+safetensors = "0.4.5"
 
 # CLI and UI
 clap = { version = "4", features = ["derive"] }

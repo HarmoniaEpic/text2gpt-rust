@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Select};
+use std::io::Write;
 use std::path::PathBuf;
 
 mod config;
@@ -204,7 +205,7 @@ fn main() -> Result<()> {
             config.initial_tokens = initial_tokens;
             config.final_tokens = final_tokens;
             config.batch_size = batch_size;
-            config.learning_rate = learning_rate;
+            config.learning_rate = learning_rate as f32;
             
             let ollama_refine_model = ollama_refine_model.unwrap_or_else(|| ollama_gen_model.clone());
             
@@ -395,7 +396,7 @@ fn interactive_generate(
         .items(&gen_methods.iter().map(|(name, desc)| format!("{} - {}", name, desc)).collect::<Vec<_>>())
         .interact()?;
     
-    let use_ollama = gen_method_idx == 1;
+    let use_ollama = gen_method_idx == 1 && use_ollama;
     let (gen_model, ref_model) = if use_ollama {
         // Ollama method - select models
         println!("\n{}", "Select Ollama model for data generation:".bright_cyan());
@@ -493,6 +494,8 @@ fn generate_model(
     println!("{}", format!("Domain: {}", result.domain).bright_white());
     println!("{}", format!("Model size: {:?}", config.model_size).bright_white());
     println!("{}", format!("Epochs: {}", config.num_epochs).bright_white());
+    println!("{}", format!("Final loss: {:.4}", result.final_loss).bright_white());
+    println!("{}", format!("Training time: {:.1}s", result.training_time_seconds).bright_white());
     println!("{}", format!("Dataset: {}/dataset.json", result.model_path.display()).bright_white());
     println!("{}", "=".repeat(60).bright_blue());
     
@@ -508,16 +511,29 @@ fn inference_mode(
 ) -> Result<()> {
     println!("{}", format!("Loading model from: {}", model_path.display()).bright_cyan());
     
+    // Use the improved loading method
     let generator = crate::inference::TextGenerator::load(&model_path)?;
+    
+    println!("{}", "Model loaded successfully!".bright_green());
+    println!("\n{}", generator.model_info());
     
     if let Some(prompt) = initial_prompt {
         // Single generation
+        println!("\n{}", "Generating text...".bright_yellow());
         let generated = generator.generate(&prompt, max_length, temperature, top_k)?;
         println!("\n{}", "Generated text:".bright_green());
         println!("{}", generated);
     } else {
         // Interactive mode
         println!("\n{}", "Interactive inference mode. Type 'quit' to exit.".bright_cyan());
+        println!("{}", "You can also use special commands:".bright_cyan());
+        println!("  /info    - Show model information");
+        println!("  /params  - Show current generation parameters");
+        println!("  /set     - Change generation parameters");
+        
+        let mut current_temp = temperature;
+        let mut current_top_k = top_k;
+        let mut current_max_length = max_length;
         
         loop {
             let prompt = dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
@@ -528,9 +544,80 @@ fn inference_mode(
                 break;
             }
             
-            let generated = generator.generate(&prompt, max_length, temperature, top_k)?;
-            println!("\n{}", "Generated:".bright_green());
-            println!("{}\n", generated);
+            match prompt.trim() {
+                "/info" => {
+                    println!("\n{}", generator.model_info());
+                    continue;
+                }
+                "/params" => {
+                    println!("\nCurrent parameters:");
+                    println!("  Temperature: {}", current_temp);
+                    println!("  Top-k: {}", current_top_k);
+                    println!("  Max length: {}", current_max_length);
+                    continue;
+                }
+                "/set" => {
+                    // Interactive parameter setting
+                    current_temp = dialoguer::Input::<f64>::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Temperature (0.1-2.0)")
+                        .default(current_temp)
+                        .validate_with(|input: &f64| {
+                            if *input >= 0.1 && *input <= 2.0 {
+                                Ok(())
+                            } else {
+                                Err("Temperature must be between 0.1 and 2.0")
+                            }
+                        })
+                        .interact_text()?;
+                    
+                    current_top_k = dialoguer::Input::<usize>::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Top-k (1-100)")
+                        .default(current_top_k)
+                        .validate_with(|input: &usize| {
+                            if *input >= 1 && *input <= 100 {
+                                Ok(())
+                            } else {
+                                Err("Top-k must be between 1 and 100")
+                            }
+                        })
+                        .interact_text()?;
+                    
+                    current_max_length = dialoguer::Input::<usize>::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Max length (10-500)")
+                        .default(current_max_length)
+                        .validate_with(|input: &usize| {
+                            if *input >= 10 && *input <= 500 {
+                                Ok(())
+                            } else {
+                                Err("Max length must be between 10 and 500")
+                            }
+                        })
+                        .interact_text()?;
+                    
+                    println!("Parameters updated!");
+                    continue;
+                }
+                _ => {}
+            }
+            
+            // Stream generation with live output
+            print!("\n{}", "Generated:".bright_green());
+            print!(" ");
+            std::io::stdout().flush()?;
+            
+            let _generated = generator.generate_stream(
+                &prompt, 
+                current_max_length, 
+                current_temp, 
+                current_top_k,
+                |token| {
+                    print!("{}", token);
+                    std::io::stdout().flush()?;
+                    Ok(())
+                }
+            )?;
+            
+            println!("\n");
         }
     }
     
@@ -555,6 +642,13 @@ fn list_models(models_dir: &PathBuf) -> Result<()> {
         println!("   Domain: {}", model.info.category);
         println!("   Created: {}", model.info.creation_date);
         println!("   Model size: {}", model.info.model_size);
+        println!("   Epochs: {}", model.info.training_params.epochs);
+        println!("   Final tokens: {}", model.info.data_stats.final_tokens);
+        if model.info.ollama_used {
+            if let Some(ref gen_model) = model.info.generation_model {
+                println!("   Generation model: {}", gen_model);
+            }
+        }
         println!("{}", "-".repeat(80));
     }
     

@@ -46,7 +46,7 @@ pub fn load_model<P: AsRef<Path>>(
     };
     
     // Create VarMap and load weights
-    let varmap = Arc::new(VarMap::new());
+    let varmap = VarMap::new();
     let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
     
     // Create model structure
@@ -57,7 +57,7 @@ pub fn load_model<P: AsRef<Path>>(
         .context("Failed to load weights into VarMap")?;
     
     log::info!("Model loaded from: {}", path.display());
-    Ok((model, config, varmap))
+    Ok((model, config, Arc::new(varmap)))
 }
 
 /// Load model using memory-mapped safetensors (most efficient for large models)
@@ -137,14 +137,14 @@ pub fn load_model_folder<P: AsRef<Path>>(
     
     // Load model
     let model_path = folder_path.join("model.safetensors");
-    let (model, _, varmap) = load_model(&model_path, device)?;
+    let (model, _, varmap_loaded) = load_model(&model_path, device)?;
     
     // Load tokenizer
     let tokenizer = GPT2Tokenizer::from_pretrained(folder_path)
         .context("Failed to load tokenizer")?;
     
     log::info!("Model folder loaded from: {}", folder_path.display());
-    Ok((model, tokenizer, config, varmap))
+    Ok((model, tokenizer, config, varmap_loaded))
 }
 
 /// Load model from multiple safetensors files (for large models)
@@ -176,50 +176,12 @@ pub fn load_model_sharded<P: AsRef<Path>>(
 
 /// Try to load config from safetensors metadata
 fn load_config_from_safetensors<P: AsRef<Path>>(path: P) -> Result<Config> {
-    use safetensors::SafeTensors;
+    // For now, we'll assume a default config since metadata access is limited
+    // In production, you would save the config separately as JSON
+    let config = Config::default();
     
-    let data = fs::read(path.as_ref())?;
-    let tensors = SafeTensors::deserialize(&data)?;
-    
-    // Access metadata
-    let metadata = tensors.metadata()
-        .map_err(|e| anyhow!("Failed to get metadata: {}", e))?;
-    
-    // Extract config from metadata
-    let vocab_size = metadata.get("vocab_size")
-        .ok_or_else(|| anyhow!("Missing vocab_size in metadata"))?
-        .parse::<usize>()?;
-    
-    let n_embd = metadata.get("n_embd")
-        .ok_or_else(|| anyhow!("Missing n_embd in metadata"))?
-        .parse::<usize>()?;
-    
-    let n_layer = metadata.get("n_layer")
-        .ok_or_else(|| anyhow!("Missing n_layer in metadata"))?
-        .parse::<usize>()?;
-    
-    let n_head = metadata.get("n_head")
-        .ok_or_else(|| anyhow!("Missing n_head in metadata"))?
-        .parse::<usize>()?;
-    
-    let n_positions = metadata.get("n_positions")
-        .unwrap_or(&"512".to_string())
-        .parse::<usize>()?;
-    
-    // Determine model size based on architecture
-    let model_size = match (n_embd, n_layer) {
-        (384, 6) => crate::config::ModelSize::Small,
-        (512, 8) => crate::config::ModelSize::Medium,
-        (768, 12) => crate::config::ModelSize::Large,
-        _ => return Err(anyhow!("Unknown model configuration: n_embd={}, n_layer={}", n_embd, n_layer)),
-    };
-    
-    let mut config = Config::new(model_size, 42);
-    config.vocab_size = vocab_size;
-    config.n_embd = n_embd;
-    config.n_layer = n_layer;
-    config.n_head = n_head;
-    config.n_positions = n_positions;
+    log::warn!("Loading config from safetensors metadata is not fully supported. Using default config.");
+    log::info!("Make sure to save/load config.json alongside the model file.");
     
     Ok(config)
 }
@@ -267,13 +229,8 @@ pub fn inspect_safetensors<P: AsRef<Path>>(path: P) -> Result<()> {
     println!("=== Safetensors File Inspection ===");
     println!("File: {}", path.as_ref().display());
     
-    // Print metadata
-    if let Ok(metadata) = tensors.metadata() {
-        println!("\nMetadata:");
-        for (key, value) in metadata {
-            println!("  {}: {}", key, value);
-        }
-    }
+    // Note: metadata field is private in current safetensors version
+    println!("\nNote: Metadata inspection is not available in the current safetensors API.");
     
     // Print tensor information
     println!("\nTensors:");

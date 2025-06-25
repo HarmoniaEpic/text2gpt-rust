@@ -13,7 +13,7 @@ mod model;
 mod tokenizer;
 mod training;
 
-use crate::config::{Config, ModelSize};
+use crate::config::{Config, ModelSize, OllamaTimeoutPreset, OllamaTimeouts};
 use crate::data::generator::DataGenerationMethod;
 
 #[derive(Parser)]
@@ -77,6 +77,26 @@ enum Commands {
         /// Ollama model for refinement (defaults to generation model)
         #[arg(long)]
         ollama_refine_model: Option<String>,
+        
+        /// Ollama timeout preset (auto, gpu, cpu)
+        #[arg(long, default_value = "auto")]
+        ollama_timeout_preset: OllamaTimeoutPreset,
+        
+        /// Ollama connection timeout in seconds
+        #[arg(long)]
+        ollama_timeout_connection: Option<u64>,
+        
+        /// Ollama generation timeout in seconds
+        #[arg(long)]
+        ollama_timeout_generation: Option<u64>,
+        
+        /// Ollama evaluation timeout in seconds
+        #[arg(long)]
+        ollama_timeout_evaluation: Option<u64>,
+        
+        /// Ollama request interval in milliseconds
+        #[arg(long)]
+        ollama_request_interval: Option<u64>,
         
         /// Output directory for models
         #[arg(long, default_value = "models")]
@@ -195,6 +215,11 @@ fn main() -> Result<()> {
             no_ollama,
             ollama_gen_model,
             ollama_refine_model,
+            ollama_timeout_preset,
+            ollama_timeout_connection,
+            ollama_timeout_generation,
+            ollama_timeout_evaluation,
+            ollama_request_interval,
             output_dir,
             batch_size,
             learning_rate,
@@ -206,6 +231,30 @@ fn main() -> Result<()> {
             config.final_tokens = final_tokens;
             config.batch_size = batch_size;
             config.learning_rate = learning_rate as f32;
+            
+            // Initialize device first
+            config.init_device()?;
+            
+            // Check environment variable for preset override
+            let preset = std::env::var("TEXT2GPT1_OLLAMA_TIMEOUT_PRESET")
+                .ok()
+                .and_then(|s| s.parse::<OllamaTimeoutPreset>().ok())
+                .unwrap_or(ollama_timeout_preset);
+            
+            // Initialize Ollama timeouts
+            let timeouts = config.init_ollama_timeouts(preset);
+            
+            // Apply command line overrides
+            let timeouts = timeouts.clone().with_overrides(
+                ollama_timeout_connection,
+                ollama_timeout_generation,
+                ollama_timeout_evaluation,
+                ollama_request_interval,
+            );
+            config.ollama_timeouts = Some(timeouts);
+            
+            // Log timeout settings
+            config.ollama_timeouts().log_settings(preset);
             
             let ollama_refine_model = ollama_refine_model.unwrap_or_else(|| ollama_gen_model.clone());
             
@@ -270,7 +319,9 @@ fn main_menu() -> Result<()> {
     
     match selection {
         0 => {
-            let config = Config::default();
+            let mut config = Config::default();
+            config.init_device()?;
+            config.init_ollama_timeouts(OllamaTimeoutPreset::Auto);
             interactive_generate(
                 config,
                 PathBuf::from("models"),

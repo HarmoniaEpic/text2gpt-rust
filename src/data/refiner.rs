@@ -3,8 +3,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::time::Duration;
 
+use crate::config::OllamaTimeouts;
 use crate::tokenizer::GPT2Tokenizer;
 
 /// Data refiner that evaluates and selects high-quality samples
@@ -12,14 +12,16 @@ pub struct DataRefiner {
     prompt: String,
     tokenizer: GPT2Tokenizer,
     ollama_host: String,
+    timeouts: OllamaTimeouts,
 }
 
 impl DataRefiner {
-    pub fn new(prompt: &str, tokenizer: GPT2Tokenizer, ollama_host: &str) -> Self {
+    pub fn new(prompt: &str, tokenizer: GPT2Tokenizer, ollama_host: &str, timeouts: OllamaTimeouts) -> Self {
         Self {
             prompt: prompt.to_string(),
             tokenizer,
             ollama_host: ollama_host.to_string(),
+            timeouts,
         }
     }
     
@@ -143,7 +145,7 @@ impl DataRefiner {
         match client
             .post(&url)
             .json(&request)
-            .timeout(Duration::from_secs(10))
+            .timeout(self.timeouts.evaluation)
             .send()
             .await
         {

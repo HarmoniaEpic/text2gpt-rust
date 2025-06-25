@@ -4,7 +4,6 @@ use candle_nn::{AdamW, Optimizer, ParamsAdamW, VarBuilder, VarMap};
 use chrono::Local;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -336,7 +335,10 @@ fn test_generation(
             tokenizer.encode(prompt)?
         };
         
-        let input = Tensor::new(start_ids.as_slice(), device)?.unsqueeze(0)?;
+        // Convert to i64 to match the generate function's expectations
+        let start_ids_i64: Vec<i64> = start_ids.iter().map(|&x| x as i64).collect();
+        
+        let input = Tensor::new(start_ids_i64.as_slice(), device)?.unsqueeze(0)?;
         let generated = model.generate(&input, 30, 0.8, Some(40))?;
         
         let generated_ids: Vec<u32> = generated.squeeze(0)?.to_vec1::<i64>()?

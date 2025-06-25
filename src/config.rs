@@ -1,6 +1,7 @@
 use candle_core::{Device, Result as CandleResult};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::time::Duration;
 
 /// Model size configurations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +37,135 @@ impl std::fmt::Display for ModelSize {
     }
 }
 
+/// Ollama timeout preset
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OllamaTimeoutPreset {
+    Auto,
+    Gpu,
+    Cpu,
+}
+
+impl FromStr for OllamaTimeoutPreset {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "auto" => Ok(OllamaTimeoutPreset::Auto),
+            "gpu" => Ok(OllamaTimeoutPreset::Gpu),
+            "cpu" => Ok(OllamaTimeoutPreset::Cpu),
+            _ => Err(format!("Invalid timeout preset: {}. Use auto, gpu, or cpu", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for OllamaTimeoutPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OllamaTimeoutPreset::Auto => write!(f, "auto"),
+            OllamaTimeoutPreset::Gpu => write!(f, "gpu"),
+            OllamaTimeoutPreset::Cpu => write!(f, "cpu"),
+        }
+    }
+}
+
+/// Ollama timeout settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaTimeouts {
+    pub connection_check: Duration,
+    pub generation: Duration,
+    pub evaluation: Duration,
+    pub request_interval: Duration,
+}
+
+impl OllamaTimeouts {
+    /// Create GPU-optimized timeouts
+    pub fn gpu_preset() -> Self {
+        Self {
+            connection_check: Duration::from_secs(5),
+            generation: Duration::from_secs(30),
+            evaluation: Duration::from_secs(10),
+            request_interval: Duration::from_millis(500),
+        }
+    }
+    
+    /// Create CPU-optimized timeouts
+    pub fn cpu_preset() -> Self {
+        Self {
+            connection_check: Duration::from_secs(5),
+            generation: Duration::from_secs(300),  // 5 minutes
+            evaluation: Duration::from_secs(60),   // 1 minute
+            request_interval: Duration::from_millis(1000),
+        }
+    }
+    
+    /// Create timeouts based on preset and device
+    pub fn from_preset(preset: OllamaTimeoutPreset, device: Option<&Device>) -> Self {
+        match preset {
+            OllamaTimeoutPreset::Auto => {
+                // Check if CUDA is available
+                let is_gpu = device.map_or(false, |d| matches!(d, Device::Cuda(_)));
+                if is_gpu {
+                    Self::gpu_preset()
+                } else {
+                    Self::cpu_preset()
+                }
+            }
+            OllamaTimeoutPreset::Gpu => Self::gpu_preset(),
+            OllamaTimeoutPreset::Cpu => Self::cpu_preset(),
+        }
+    }
+    
+    /// Apply overrides from command line arguments or environment variables
+    pub fn with_overrides(
+        mut self,
+        connection: Option<u64>,
+        generation: Option<u64>,
+        evaluation: Option<u64>,
+        interval: Option<u64>,
+    ) -> Self {
+        if let Some(secs) = connection {
+            self.connection_check = Duration::from_secs(secs);
+        }
+        if let Some(secs) = generation {
+            self.generation = Duration::from_secs(secs);
+        }
+        if let Some(secs) = evaluation {
+            self.evaluation = Duration::from_secs(secs);
+        }
+        if let Some(millis) = interval {
+            self.request_interval = Duration::from_millis(millis);
+        }
+        self
+    }
+    
+    /// Load from environment variables
+    pub fn from_env_overrides(self) -> Self {
+        let connection = std::env::var("TEXT2GPT1_OLLAMA_TIMEOUT_CONNECTION")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let generation = std::env::var("TEXT2GPT1_OLLAMA_TIMEOUT_GENERATION")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let evaluation = std::env::var("TEXT2GPT1_OLLAMA_TIMEOUT_EVALUATION")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let interval = std::env::var("TEXT2GPT1_OLLAMA_REQUEST_INTERVAL")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        
+        self.with_overrides(connection, generation, evaluation, interval)
+    }
+    
+    /// Log current timeout settings
+    pub fn log_settings(&self, preset_used: OllamaTimeoutPreset) {
+        log::info!("Ollama timeout settings (preset: {}):", preset_used);
+        log::info!("  Connection check: {:?}", self.connection_check);
+        log::info!("  Generation: {:?}", self.generation);
+        log::info!("  Evaluation: {:?}", self.evaluation);
+        log::info!("  Request interval: {:?}", self.request_interval);
+    }
+}
+
 /// Main configuration struct for the model and training
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -64,6 +194,10 @@ pub struct Config {
     // Device configuration (not serialized)
     #[serde(skip)]
     pub device: Option<Device>,
+    
+    // Ollama timeout settings (not serialized)
+    #[serde(skip)]
+    pub ollama_timeouts: Option<OllamaTimeouts>,
 }
 
 impl Config {
@@ -98,6 +232,7 @@ impl Config {
             // Other settings
             seed,
             device: None,
+            ollama_timeouts: None,
         }
     }
     
@@ -112,6 +247,21 @@ impl Config {
             self.device = Some(Device::cuda_if_available(0)?);
         }
         Ok(self.device.as_ref().unwrap())
+    }
+    
+    /// Get Ollama timeouts
+    pub fn ollama_timeouts(&self) -> &OllamaTimeouts {
+        self.ollama_timeouts.as_ref().expect("Ollama timeouts not initialized")
+    }
+    
+    /// Initialize Ollama timeouts
+    pub fn init_ollama_timeouts(&mut self, preset: OllamaTimeoutPreset) -> &OllamaTimeouts {
+        if self.ollama_timeouts.is_none() {
+            let timeouts = OllamaTimeouts::from_preset(preset, self.device.as_ref())
+                .from_env_overrides();
+            self.ollama_timeouts = Some(timeouts);
+        }
+        self.ollama_timeouts.as_ref().unwrap()
     }
     
     /// Get parameter count in millions

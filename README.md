@@ -22,6 +22,7 @@ Text2GPT1-Rustは、ユーザーが指定したプロンプト（例：「料理
 - 📊 **リアルタイム進捗** - カラフルなプログレスバーで処理状況を可視化
 - 🎯 **ドメイン特化** - 料理、詩、技術文書、汎用など複数のドメインに対応
 - 💼 **スタンドアロン** - 単一バイナリとして配布可能
+- ⏱️ **GPU/CPU最適化** - 環境に応じた自動タイムアウト調整
 
 ## 🛠️ インストール
 
@@ -101,6 +102,17 @@ text2gpt1 generate \
   --initial-tokens 3000 \
   --final-tokens 1500
 
+# CPU用タイムアウト設定
+text2gpt1 generate \
+  --prompt "料理レシピGPT" \
+  --ollama-timeout-preset cpu
+
+# カスタムタイムアウト設定
+text2gpt1 generate \
+  --prompt "詩的なGPT" \
+  --ollama-timeout-generation 600 \
+  --ollama-timeout-evaluation 120
+
 # 既存モデルで推論
 text2gpt1 infer --model-path models/cooking_20240123
 
@@ -122,6 +134,47 @@ text2gpt1 list
 
 1. **テンプレートベース** - オフライン対応、高速
 2. **Ollama統合** - 高品質、多様性のある生成（推奨）
+
+### Ollamaタイムアウト設定
+
+#### タイムアウトプリセット
+
+| プリセット | 接続確認 | テキスト生成 | 品質評価 | リクエスト間隔 |
+|-----------|---------|-------------|---------|---------------|
+| `gpu` | 5秒 | 30秒 | 10秒 | 500ms |
+| `cpu` | 5秒 | 300秒（5分） | 60秒（1分） | 1000ms（1秒） |
+| `auto` | デバイスに応じて自動選択 |
+
+#### タイムアウト関連オプション
+
+- `--ollama-timeout-preset <auto|gpu|cpu>`: タイムアウトプリセット（デフォルト: auto）
+- `--ollama-timeout-connection <秒>`: 接続確認タイムアウト
+- `--ollama-timeout-generation <秒>`: テキスト生成タイムアウト
+- `--ollama-timeout-evaluation <秒>`: 品質評価タイムアウト
+- `--ollama-request-interval <ミリ秒>`: リクエスト間隔
+
+### 環境変数
+
+Text2GPT1は以下の環境変数をサポートしています：
+
+| 環境変数 | 説明 | デフォルト |
+|---------|------|-----------|
+| `TEXT2GPT1_OLLAMA_TIMEOUT_PRESET` | タイムアウトプリセット (auto/gpu/cpu) | auto |
+| `TEXT2GPT1_OLLAMA_TIMEOUT_GENERATION` | テキスト生成タイムアウト（秒） | プリセットに依存 |
+| `TEXT2GPT1_OLLAMA_TIMEOUT_EVALUATION` | 品質評価タイムアウト（秒） | プリセットに依存 |
+| `TEXT2GPT1_OLLAMA_TIMEOUT_CONNECTION` | 接続確認タイムアウト（秒） | 5 |
+| `TEXT2GPT1_OLLAMA_REQUEST_INTERVAL` | リクエスト間隔（ミリ秒） | プリセットに依存 |
+
+環境変数の設定例：
+
+```bash
+# 永続的な設定
+export TEXT2GPT1_OLLAMA_TIMEOUT_GENERATION=600
+export TEXT2GPT1_OLLAMA_TIMEOUT_PRESET=cpu
+
+# 一時的な設定
+TEXT2GPT1_OLLAMA_TIMEOUT_GENERATION=900 text2gpt1 generate --prompt "..."
+```
 
 ### 主要パラメータ
 
@@ -160,6 +213,19 @@ text2gpt1 generate \
   --ollama-gen-model codellama \
   --epochs 150 \
   --model-size 33M
+```
+
+### CPU環境での使用例
+
+```bash
+# CPU用プリセットを使用
+text2gpt1 generate \
+  --prompt "料理レシピGPT" \
+  --ollama-timeout-preset cpu
+
+# または環境変数で設定
+export TEXT2GPT1_OLLAMA_TIMEOUT_PRESET=cpu
+text2gpt1 generate --prompt "料理レシピGPT"
 ```
 
 ## 📁 出力ファイル
@@ -206,6 +272,21 @@ CUDA_VISIBLE_DEVICES="" text2gpt1 generate --prompt "..."
 
 - バッチサイズを小さくする: `--batch-size 1`
 - より小さいモデルサイズを使用: `--model-size 12M`
+
+### CPU環境でタイムアウトが発生する場合
+
+```bash
+# CPU用プリセットを使用
+text2gpt1 generate --prompt "..." --ollama-timeout-preset cpu
+
+# または個別にタイムアウトを延長
+text2gpt1 generate --prompt "..." \
+  --ollama-timeout-generation 600 \
+  --ollama-timeout-evaluation 120
+
+# 環境変数での設定
+export TEXT2GPT1_OLLAMA_TIMEOUT_PRESET=cpu
+```
 
 ## 🤝 フォーク推奨
 

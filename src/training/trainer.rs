@@ -30,10 +30,14 @@ pub async fn run_full_pipeline(
     let tokenizer = GPT2Tokenizer::new()
         .context("Failed to initialize GPT2 tokenizer - ensure you have internet access for first-time download")?;
     
+    // Get timeouts from config
+    let timeouts = config.ollama_timeouts()
+        .clone();
+    
     // Data generation
     println!("\n{}", format!("[Step 1/7] Generating {} initial tokens", config.initial_tokens).bright_green());
     
-    let mut generator = DataGenerator::new(prompt, tokenizer.clone(), "http://localhost:11434")?;
+    let mut generator = DataGenerator::new(prompt, tokenizer.clone(), "http://localhost:11434", timeouts.clone())?;
     
     // Check Ollama if using it
     if let DataGenerationMethod::Ollama { ref gen_model, .. } = generation_method {
@@ -48,7 +52,7 @@ pub async fn run_full_pipeline(
     // Data refinement
     println!("\n{}", format!("[Step 2/7] Refining to {} tokens", config.final_tokens).bright_green());
     
-    let refiner = DataRefiner::new(prompt, tokenizer.clone(), "http://localhost:11434");
+    let refiner = DataRefiner::new(prompt, tokenizer.clone(), "http://localhost:11434", timeouts);
     
     let refined_samples = match &generation_method {
         DataGenerationMethod::Ollama { refine_model, .. } => {

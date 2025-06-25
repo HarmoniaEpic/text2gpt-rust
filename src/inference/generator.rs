@@ -72,8 +72,11 @@ impl TextGenerator {
             self.tokenizer.encode(prompt)?
         };
         
+        // Convert to i64 for consistency with model's generate method
+        let input_ids_i64: Vec<i64> = input_ids.iter().map(|&x| x as i64).collect();
+        
         // Convert to tensor
-        let input = Tensor::new(input_ids.as_slice(), &self.device)?.unsqueeze(0)?;
+        let input = Tensor::new(input_ids_i64.as_slice(), &self.device)?.unsqueeze(0)?;
         
         // Generate
         let generated = self.model.generate(&input, max_length, temperature, Some(top_k))?;
@@ -146,7 +149,10 @@ impl TextGenerator {
             self.tokenizer.encode(prompt)?
         };
         
-        let mut idx = Tensor::new(input_ids.as_slice(), &self.device)?.unsqueeze(0)?;
+        // Convert to i64 for consistency
+        let input_ids_i64: Vec<i64> = input_ids.iter().map(|&x| x as i64).collect();
+        
+        let mut idx = Tensor::new(input_ids_i64.as_slice(), &self.device)?.unsqueeze(0)?;
         let mut generated_tokens = Vec::new();
         
         for _ in 0..max_length {
@@ -175,7 +181,12 @@ impl TextGenerator {
         }
         
         // Return the full generated text
-        let full_ids: Vec<u32> = input_ids.into_iter()
+        // Convert original input_ids to u32 for concatenation
+        let input_ids_u32: Vec<u32> = input_ids_i64.into_iter()
+            .map(|x| x as u32)
+            .collect();
+        
+        let full_ids: Vec<u32> = input_ids_u32.into_iter()
             .chain(generated_tokens.into_iter())
             .collect();
         

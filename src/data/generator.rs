@@ -3,8 +3,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
+use crate::config::OllamaTimeouts;
 use crate::tokenizer::GPT2Tokenizer;
 
 /// Data generation method
@@ -24,10 +24,11 @@ pub struct DataGenerator {
     domain: String,
     ollama_host: String,
     ollama_available: bool,
+    timeouts: OllamaTimeouts,
 }
 
 impl DataGenerator {
-    pub fn new(prompt: &str, tokenizer: GPT2Tokenizer, ollama_host: &str) -> Result<Self> {
+    pub fn new(prompt: &str, tokenizer: GPT2Tokenizer, ollama_host: &str, timeouts: OllamaTimeouts) -> Result<Self> {
         let domain = extract_domain(prompt);
         
         Ok(Self {
@@ -36,6 +37,7 @@ impl DataGenerator {
             domain,
             ollama_host: ollama_host.to_string(),
             ollama_available: false,
+            timeouts,
         })
     }
     
@@ -54,7 +56,7 @@ impl DataGenerator {
         let client = reqwest::Client::new();
         let url = format!("{}/api/tags", self.ollama_host);
         
-        match client.get(&url).timeout(Duration::from_secs(5)).send().await {
+        match client.get(&url).timeout(self.timeouts.connection_check).send().await {
             Ok(response) if response.status().is_success() => {
                 let models: OllamaModels = response.json().await
                     .context("Failed to parse Ollama models response")?;
@@ -191,7 +193,7 @@ impl DataGenerator {
             match client
                 .post(&url)
                 .json(&request)
-                .timeout(Duration::from_secs(30))
+                .timeout(self.timeouts.generation)
                 .send()
                 .await
             {
@@ -242,8 +244,8 @@ impl DataGenerator {
             
             prompt_idx += 1;
             
-            // Add small delay to avoid overwhelming the API
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Add request interval delay
+            tokio::time::sleep(self.timeouts.request_interval).await;
         }
         
         pb.finish_with_message("Ollama generation complete");

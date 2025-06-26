@@ -209,6 +209,13 @@ impl Config {
             ModelSize::Large => (768, 12, 12),  // 117M params
         };
         
+        // Model size-aware default token counts
+        let (initial_tokens, final_tokens) = match model_size {
+            ModelSize::Small => (30_000, 15_000),   // 12M: smaller dataset
+            ModelSize::Medium => (50_000, 25_000),  // 33M: balanced dataset
+            ModelSize::Large => (100_000, 50_000),  // 117M: larger dataset
+        };
+        
         Config {
             // Model architecture
             vocab_size: 50257,  // GPT-2 tokenizer vocab size
@@ -225,14 +232,23 @@ impl Config {
             dropout: 0.1_f32,         // Changed to f32
             
             // Data settings
-            initial_tokens: 2000,
-            final_tokens: 1000,
+            initial_tokens,
+            final_tokens,
             max_length: 128,
             
             // Other settings
             seed,
             device: None,
             ollama_timeouts: None,
+        }
+    }
+    
+    /// Get recommended token counts for a model size
+    pub fn get_recommended_tokens(model_size: ModelSize) -> (usize, usize) {
+        match model_size {
+            ModelSize::Small => (30_000, 15_000),
+            ModelSize::Medium => (50_000, 25_000),
+            ModelSize::Large => (100_000, 50_000),
         }
     }
     
@@ -364,48 +380,116 @@ pub struct OllamaModelInfo {
 /// Get Ollama model information
 pub fn get_ollama_model_info(model: &str) -> Option<OllamaModelInfo> {
     match model {
-        "llama3" => Some(OllamaModelInfo {
-            name: "Llama 3",
+        // Llama 3.1 series - Latest Meta models
+        "llama3.1:8b" => Some(OllamaModelInfo {
+            name: "Llama 3.1",
             size: "8B",
-            description: "Meta's latest model - Well-balanced general model",
-            best_for: vec!["general", "cooking", "poetry"],
+            description: "Latest Llama model - Excellent balance of quality and speed",
+            best_for: vec!["general", "cooking", "poetry", "conversation"],
         }),
-        "llama3:70b" => Some(OllamaModelInfo {
-            name: "Llama 3 Large",
+        "llama3.1:70b" => Some(OllamaModelInfo {
+            name: "Llama 3.1 Large",
             size: "70B",
-            description: "Highest quality generation (requires high-end GPU)",
-            best_for: vec!["technical", "poetry"],
+            description: "Highest quality generation (requires 40GB+ VRAM)",
+            best_for: vec!["technical", "poetry", "creative"],
         }),
-        "mistral" => Some(OllamaModelInfo {
-            name: "Mistral",
+        
+        // Qwen 2.5 series - Excellent multilingual support
+        "qwen2.5:3b" => Some(OllamaModelInfo {
+            name: "Qwen 2.5 Tiny",
+            size: "3B",
+            description: "Lightweight model with good multilingual support",
+            best_for: vec!["general", "conversation"],
+        }),
+        "qwen2.5:7b" => Some(OllamaModelInfo {
+            name: "Qwen 2.5",
             size: "7B",
-            description: "Fast and efficient generation",
-            best_for: vec!["general", "technical"],
+            description: "Excellent multilingual model - Great for Japanese",
+            best_for: vec!["general", "cooking", "poetry", "technical"],
         }),
-        "gemma" => Some(OllamaModelInfo {
-            name: "Gemma",
+        "qwen2.5:14b" => Some(OllamaModelInfo {
+            name: "Qwen 2.5 Medium",
+            size: "14B",
+            description: "High-quality multilingual generation",
+            best_for: vec!["technical", "creative", "poetry"],
+        }),
+        "qwen2.5:72b" => Some(OllamaModelInfo {
+            name: "Qwen 2.5 Large",
+            size: "72B",
+            description: "Top-tier multilingual model (requires 40GB+ VRAM)",
+            best_for: vec!["technical", "creative", "professional"],
+        }),
+        
+        // Mistral series
+        "mistral:7b-v0.3" => Some(OllamaModelInfo {
+            name: "Mistral v0.3",
+            size: "7B",
+            description: "Fast and efficient - Good general purpose",
+            best_for: vec!["general", "technical", "conversation"],
+        }),
+        "mixtral:8x7b" => Some(OllamaModelInfo {
+            name: "Mixtral MoE",
+            size: "8x7B",
+            description: "Mixture of Experts - High quality with efficiency",
+            best_for: vec!["technical", "creative", "professional"],
+        }),
+        
+        // Google Gemma series
+        "gemma2:2b" => Some(OllamaModelInfo {
+            name: "Gemma 2",
             size: "2B",
-            description: "Google's lightweight model - Fast processing",
-            best_for: vec!["general", "cooking"],
+            description: "Google's efficient small model",
+            best_for: vec!["general", "cooking", "conversation"],
         }),
-        "gemma:7b" => Some(OllamaModelInfo {
-            name: "Gemma Large",
-            size: "7B",
-            description: "Larger Gemma - Higher quality",
-            best_for: vec!["general", "technical"],
+        "gemma2:9b" => Some(OllamaModelInfo {
+            name: "Gemma 2 Medium",
+            size: "9B",
+            description: "Balanced Google model with good performance",
+            best_for: vec!["general", "technical", "creative"],
         }),
-        "codellama" => Some(OllamaModelInfo {
+        
+        // Microsoft Phi series
+        "phi3:mini" => Some(OllamaModelInfo {
+            name: "Phi-3 Mini",
+            size: "3.8B",
+            description: "Microsoft's efficient small model",
+            best_for: vec!["general", "technical", "conversation"],
+        }),
+        "phi3:medium" => Some(OllamaModelInfo {
+            name: "Phi-3 Medium",
+            size: "14B",
+            description: "Microsoft's balanced model",
+            best_for: vec!["technical", "creative"],
+        }),
+        
+        // Code-specific models
+        "codellama:7b" => Some(OllamaModelInfo {
             name: "Code Llama",
             size: "7B",
-            description: "Specialized for programming and technical docs",
-            best_for: vec!["technical"],
+            description: "Specialized for code and technical documentation",
+            best_for: vec!["technical", "code"],
         }),
-        "phi" => Some(OllamaModelInfo {
-            name: "Phi-2",
-            size: "2.7B",
-            description: "Microsoft's small high-performance model",
-            best_for: vec!["general", "technical"],
+        "deepseek-coder:6.7b" => Some(OllamaModelInfo {
+            name: "DeepSeek Coder",
+            size: "6.7B",
+            description: "Excellent code generation model",
+            best_for: vec!["technical", "code"],
         }),
+        
+        // Ultra-lightweight models
+        "tinyllama:1.1b" => Some(OllamaModelInfo {
+            name: "TinyLlama",
+            size: "1.1B",
+            description: "Ultra-lightweight - Perfect for CPU or low VRAM",
+            best_for: vec!["general", "conversation"],
+        }),
+        "orca-mini:3b" => Some(OllamaModelInfo {
+            name: "Orca Mini",
+            size: "3B",
+            description: "CPU-optimized lightweight model",
+            best_for: vec!["general", "conversation"],
+        }),
+        
         _ => None,
     }
 }

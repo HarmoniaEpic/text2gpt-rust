@@ -5,6 +5,7 @@ pub mod io;
 pub mod model;
 pub mod tokenizer;
 pub mod training;
+pub mod utils;
 
 pub use config::{Config, ModelSize};
 pub use model::gpt::GPT;

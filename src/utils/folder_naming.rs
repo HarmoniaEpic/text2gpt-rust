@@ -94,13 +94,13 @@ impl FolderNameBuilder {
     /// ドメインに応じたキーワードを抽出
     fn extract_keywords(&self, prompt: &str, domain: &str) -> Vec<String> {
         let mut keywords = vec![domain.to_string()];
-    
+
         // ドメイン固有のキーワードマッピング
         let keyword_map = self.get_keyword_map();
-    
+
         // プロンプトから追加のキーワードを探す
         for (jp, en) in keyword_map.iter() {
-            // iter().any()を使用して存在チェック
+            // iter().any()を使用して存在チェック（エラー修正）
             if prompt.contains(jp) && !keywords.iter().any(|k| k == en) {
                 keywords.push(en.to_string());
                 if keywords.len() >= 3 {
@@ -108,10 +108,10 @@ impl FolderNameBuilder {
                 }
             }
         }
-    
+
         keywords
-    }    
-    
+    }
+
     /// 日本語から英語へのキーワードマッピング
     fn get_keyword_map(&self) -> HashMap<&'static str, &'static str> {
         let mut map = HashMap::new();

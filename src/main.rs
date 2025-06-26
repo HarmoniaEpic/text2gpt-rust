@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Select};
@@ -16,6 +16,11 @@ mod utils;
 
 use crate::config::{Config, ModelSize, OllamaTimeoutPreset, OllamaTimeouts};
 use crate::data::generator::DataGenerationMethod;
+use crate::utils::{
+    check_ollama_running, get_installed_models, format_model_list_for_display,
+    generate_category_warning, show_ollama_not_running_error, show_no_models_error,
+    show_installation_hints,
+};
 
 #[derive(Parser)]
 #[command(
@@ -72,7 +77,7 @@ enum Commands {
         no_ollama: bool,
         
         /// Ollama model for generation
-        #[arg(long, default_value = "llama3")]
+        #[arg(long, default_value = "llama3.1:8b")]
         ollama_gen_model: String,
         
         /// Ollama model for refinement (defaults to generation model)
@@ -416,8 +421,8 @@ fn main_menu() -> Result<()> {
                 config,
                 PathBuf::from("models"),
                 true,
-                "llama3".to_string(),
-                "llama3".to_string(),
+                "llama3.1:8b".to_string(),
+                "llama3.1:8b".to_string(),
             )?;
         }
         1 => {
@@ -543,30 +548,113 @@ fn interactive_generate(
     let (gen_model, ref_model) = if use_ollama {
         // Ollama method - select models
         println!("\n{}", "Select Ollama model for data generation:".bright_cyan());
-        let ollama_models = vec![
-            "llama3", "llama3:70b", "mistral", "gemma", "gemma:7b", 
-            "codellama", "phi", "Custom"
+        
+        // Updated model list with categories
+        let ollama_models_with_info = vec![
+            ("llama3.1:8b", "Llama 3.1 (8B) - Best overall balance", "general"),
+            ("llama3.1:70b", "Llama 3.1 (70B) - Highest quality", "large"),
+            ("qwen2.5:7b", "Qwen 2.5 (7B) - Excellent multilingual", "general"),
+            ("qwen2.5:14b", "Qwen 2.5 (14B) - High quality multilingual", "medium"),
+            ("qwen2.5:72b", "Qwen 2.5 (72B) - Top multilingual", "large"),
+            ("mistral:7b-v0.3", "Mistral v0.3 (7B) - Fast & efficient", "general"),
+            ("mixtral:8x7b", "Mixtral MoE (8x7B) - High quality", "large"),
+            ("gemma2:2b", "Gemma 2 (2B) - Lightweight", "small"),
+            ("gemma2:9b", "Gemma 2 (9B) - Balanced", "medium"),
+            ("phi3:mini", "Phi-3 Mini (3.8B) - Efficient", "small"),
+            ("codellama:7b", "Code Llama (7B) - Code specialist", "technical"),
+            ("deepseek-coder:6.7b", "DeepSeek Coder (6.7B) - Code focused", "technical"),
+            ("tinyllama:1.1b", "TinyLlama (1.1B) - Ultra light", "tiny"),
+            ("Custom", "Enter custom model name", "custom"),
         ];
+        
+        let model_display: Vec<String> = ollama_models_with_info.iter()
+            .map(|(_, desc, _)| desc.to_string())
+            .collect();
         
         let gen_model_idx = Select::with_theme(&ColorfulTheme::default())
             .with_prompt("Generation model")
             .default(0)
-            .items(&ollama_models)
+            .items(&model_display)
             .interact()?;
         
-        let gen_model = if gen_model_idx == ollama_models.len() - 1 {
-            dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
-                .with_prompt("Custom model name")
-                .interact_text()?
+        let gen_model = if gen_model_idx == ollama_models_with_info.len() - 1 {
+            // Custom model selection - check installed models
+            println!("\n{}", "Checking installed Ollama models...".bright_yellow());
+            
+            // Create a new runtime for this async operation
+            let rt = tokio::runtime::Runtime::new()?;
+            
+            // Check if Ollama is running
+            let ollama_running = rt.block_on(check_ollama_running())?;
+            if !ollama_running {
+                show_ollama_not_running_error();
+                return Err(anyhow::anyhow!("Ollama is not running"));
+            }
+            
+            // Get installed models
+            let installed_models = rt.block_on(get_installed_models())?;
+            if installed_models.is_empty() {
+                show_no_models_error();
+                return Err(anyhow::anyhow!("No Ollama models installed"));
+            }
+            
+            // Show category warning if needed
+            if let Some(warning) = generate_category_warning(category_key, &installed_models) {
+                println!("{}", warning);
+            }
+            
+            // Format models for display
+            let model_list = format_model_list_for_display(&installed_models);
+            let mut selection_items = model_list;
+            selection_items.push("\n[Manual Input]".bright_magenta().to_string());
+            selection_items.push("[Install New Model]".bright_green().to_string());
+            selection_items.push("[Cancel]".bright_red().to_string());
+            
+            println!("\n{}", "Select an installed model:".bright_cyan());
+            let model_selection = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("Model")
+                .items(&selection_items)
+                .interact()?;
+            
+            // Calculate actual model index (accounting for category headers)
+            let mut actual_model_idx = 0;
+            let mut current_idx = 0;
+            let mut selected_model_name = String::new();
+            
+            for item in &selection_items {
+                if current_idx == model_selection {
+                    if item.contains("[Manual Input]") {
+                        selected_model_name = dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Enter model name")
+                            .interact_text()?;
+                        break;
+                    } else if item.contains("[Install New Model]") {
+                        println!("{}", show_installation_hints(category_key));
+                        return Err(anyhow::anyhow!("Please install a model and try again"));
+                    } else if item.contains("[Cancel]") {
+                        return Err(anyhow::anyhow!("Model selection cancelled"));
+                    } else if !item.starts_with("\n[") && !item.starts_with("[") {
+                        // This is a model entry, extract the name
+                        if let Some(space_pos) = item.find(' ') {
+                            selected_model_name = item[..space_pos].to_string();
+                            break;
+                        }
+                    }
+                }
+                current_idx += 1;
+            }
+            
+            selected_model_name
         } else {
-            ollama_models[gen_model_idx].to_string()
+            ollama_models_with_info[gen_model_idx].0.to_string()
         };
         
         println!("\n{}", "Select model for data refinement (quality evaluation):".bright_cyan());
         let ref_model_options = vec![
             format!("Same as generation ({})", gen_model),
-            "llama3".to_string(),
-            "mistral".to_string(),
+            "llama3.1:8b - Balanced evaluator".to_string(),
+            "qwen2.5:7b - Multilingual evaluator".to_string(),
+            "mistral:7b-v0.3 - Fast evaluator".to_string(),
             "Custom".to_string(),
         ];
         
@@ -578,10 +666,58 @@ fn interactive_generate(
         
         let ref_model = match ref_model_idx {
             0 => gen_model.clone(),
-            3 => dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
-                .with_prompt("Custom model name")
-                .interact_text()?,
-            idx => ref_model_options[idx].clone(),
+            4 => {
+                // Custom selection for refinement model
+                println!("\n{}", "Select refinement model:".bright_cyan());
+                
+                // Create a new runtime for this async operation
+                let rt = tokio::runtime::Runtime::new()?;
+                
+                // Try to get installed models, but don't error if failed
+                match rt.block_on(get_installed_models()) {
+                    Ok(models) if !models.is_empty() => {
+                        // Show simplified list
+                        let model_names: Vec<String> = models.iter()
+                            .map(|m| format!("{} ({})", m.name, m.size))
+                            .collect();
+                        
+                        let mut options = vec![format!("Same as generation ({})", gen_model)];
+                        options.extend(model_names);
+                        options.push("[Manual Input]".to_string());
+                        
+                        let selection = Select::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Refinement model")
+                            .default(0)
+                            .items(&options)
+                            .interact()?;
+                        
+                        if selection == 0 {
+                            gen_model.clone()
+                        } else if selection == options.len() - 1 {
+                            dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Custom model name")
+                                .interact_text()?
+                        } else {
+                            models[selection - 1].name.clone()
+                        }
+                    }
+                    _ => {
+                        // Fallback to manual input
+                        dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Custom model name")
+                            .interact_text()?
+                    }
+                }
+            }
+            idx => {
+                // Extract model name from the option string
+                match idx {
+                    1 => "llama3.1:8b".to_string(),
+                    2 => "qwen2.5:7b".to_string(),
+                    3 => "mistral:7b-v0.3".to_string(),
+                    _ => gen_model.clone(),
+                }
+            }
         };
         
         (gen_model, ref_model)

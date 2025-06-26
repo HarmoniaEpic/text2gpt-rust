@@ -52,12 +52,16 @@ impl CausalSelfAttention {
     pub fn forward(&self, x: &Tensor, training: bool) -> Result<Tensor> {
         let (b, t, c) = x.dims3()?;
         
+        // Validate that input dimension matches expected embedding dimension
+        assert_eq!(c, self.n_embd, "Input dimension {} doesn't match n_embd {}", c, self.n_embd);
+        
         // Calculate query, key, values for all heads in batch
         let qkv = self.c_attn.forward(x)?;
         
         // Reshape to separate q, k, v
         // From [b, t, 3 * n_embd] to [b, t, 3, n_head, head_dim]
-        let qkv = qkv.reshape((b, t, 3, self.n_head, c / self.n_head))?;
+        let head_dim = self.n_embd / self.n_head;
+        let qkv = qkv.reshape((b, t, 3, self.n_head, head_dim))?;
         
         // Permute to [b, 3, n_head, t, head_dim]
         // First transpose to [b, 3, t, n_head, head_dim]
@@ -74,7 +78,6 @@ impl CausalSelfAttention {
         let v = qkv.narrow(1, 2, 1)?.squeeze(1)?.contiguous()?; // [b, n_head, t, head_dim]
         
         // Attention scores
-        let head_dim = c / self.n_head;
         let scale = 1.0 / (head_dim as f64).sqrt();
         
         // Use explicit broadcast for scaling
@@ -119,7 +122,7 @@ impl CausalSelfAttention {
         let y = y.transpose(1, 2)?;
         
         // Reshape to [b, t, c]
-        let y = y.contiguous()?.reshape((b, t, c))?;
+        let y = y.contiguous()?.reshape((b, t, self.n_embd))?;
         
         // Output projection
         let y = self.c_proj.forward(&y)?;

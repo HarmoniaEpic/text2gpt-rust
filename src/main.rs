@@ -60,13 +60,13 @@ enum Commands {
         #[arg(long, default_value = "20")]
         epochs: usize,
         
-        /// Initial tokens to generate
-        #[arg(long, default_value = "2000")]
-        initial_tokens: usize,
+        /// Initial tokens to generate (defaults based on model size)
+        #[arg(long)]
+        initial_tokens: Option<usize>,
         
-        /// Final tokens after refinement
-        #[arg(long, default_value = "1000")]
-        final_tokens: usize,
+        /// Final tokens after refinement (defaults based on model size)
+        #[arg(long)]
+        final_tokens: Option<usize>,
         
         /// Model size (12M, 33M, or 117M)
         #[arg(long, default_value = "12M")]
@@ -322,8 +322,15 @@ fn main() -> Result<()> {
         }) => {
             let mut config = Config::new(model_size, seed);
             config.num_epochs = epochs;
-            config.initial_tokens = initial_tokens;
-            config.final_tokens = final_tokens;
+            
+            // Use model size-based defaults if not explicitly specified
+            if let Some(tokens) = initial_tokens {
+                config.initial_tokens = tokens;
+            }
+            if let Some(tokens) = final_tokens {
+                config.final_tokens = tokens;
+            }
+            
             config.batch_size = batch_size;
             config.learning_rate = learning_rate as f32;
             
@@ -398,6 +405,25 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Estimate data generation time based on token count and method
+fn estimate_generation_time(tokens: usize, use_ollama: bool) -> String {
+    let minutes = if use_ollama {
+        // Ollama generation is slower but higher quality
+        (tokens as f64 / 1000.0) * 0.5 // ~0.5 minutes per 1000 tokens
+    } else {
+        // Template generation is much faster
+        (tokens as f64 / 1000.0) * 0.05 // ~0.05 minutes per 1000 tokens
+    };
+    
+    if minutes < 1.0 {
+        "< 1 minute".to_string()
+    } else if minutes < 60.0 {
+        format!("{:.0} minutes", minutes.ceil())
+    } else {
+        format!("{:.1} hours", minutes / 60.0)
+    }
+}
+
 fn main_menu() -> Result<()> {
     let selections = vec![
         "🔨 Create a new GPT model",
@@ -414,9 +440,7 @@ fn main_menu() -> Result<()> {
     
     match selection {
         0 => {
-            let mut config = Config::default();
-            config.init_device()?;
-            config.init_ollama_timeouts(OllamaTimeoutPreset::Auto);
+            let config = Config::new(ModelSize::Small, 42); // Will prompt for size in interactive mode
             interactive_generate(
                 config,
                 PathBuf::from("models"),
@@ -451,8 +475,38 @@ fn interactive_generate(
     ollama_gen_model: String,
     ollama_refine_model: String,
 ) -> Result<()> {
+    // Model size selection
+    println!("{}", "Select model size:".bright_cyan());
+    let model_sizes = vec![
+        ("12M", "Small (12M params) - Fast training, ~500MB memory", ModelSize::Small),
+        ("33M", "Medium (33M params) - Balanced quality, ~1GB memory", ModelSize::Medium),
+        ("117M", "Large (117M params) - Best quality, ~2GB memory", ModelSize::Large),
+    ];
+    
+    let size_descriptions: Vec<String> = model_sizes.iter()
+        .map(|(size, desc, _)| format!("{} - {}", size, desc))
+        .collect();
+    
+    let size_idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Model size")
+        .default(0)
+        .items(&size_descriptions)
+        .interact()?;
+    
+    let (_, _, selected_model_size) = model_sizes[size_idx];
+    
+    // Update config with new model size and corresponding token defaults
+    config = Config::new(selected_model_size, config.seed);
+    config.init_device()?;
+    config.init_ollama_timeouts(OllamaTimeoutPreset::Auto);
+    
+    // Show recommended token counts
+    let (rec_initial, rec_final) = Config::get_recommended_tokens(selected_model_size);
+    println!("\n{}", format!("Recommended dataset size for {}: {} → {} tokens", 
+        selected_model_size, rec_initial, rec_final).bright_white());
+    
     // Category selection
-    println!("{}", "Select a category:".bright_cyan());
+    println!("\n{}", "Select a category:".bright_cyan());
     let category_names: Vec<String> = CATEGORIES.iter()
         .map(|(_, name, desc)| format!("{} - {}", name, desc))
         .collect();
@@ -530,6 +584,68 @@ fn interactive_generate(
                 .interact_text()?
         }
     };
+    
+    // Data size selection
+    println!("\n{}", "Select dataset size:".bright_cyan());
+    let data_size_options = vec![
+        ("Recommended", format!("{} → {} tokens", config.initial_tokens, config.final_tokens), None),
+        ("Quick test", "10,000 → 5,000 tokens - Very fast, lower quality", Some((10_000, 5_000))),
+        ("Light", "20,000 → 10,000 tokens - Fast training", Some((20_000, 10_000))),
+        ("Standard", "50,000 → 25,000 tokens - Good balance", Some((50_000, 25_000))),
+        ("High quality", "100,000 → 50,000 tokens - Better results", Some((100_000, 50_000))),
+        ("Custom", "Specify custom token counts", None),
+    ];
+    
+    let data_descriptions: Vec<String> = data_size_options.iter()
+        .map(|(name, desc, _)| format!("{} - {}", name, desc))
+        .collect();
+    
+    let data_idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Dataset size")
+        .default(0)
+        .items(&data_descriptions)
+        .interact()?;
+    
+    match data_idx {
+        0 => {}, // Keep recommended (already set)
+        5 => {
+            // Custom
+            config.initial_tokens = dialoguer::Input::<usize>::with_theme(&ColorfulTheme::default())
+                .with_prompt("Initial tokens (before refinement)")
+                .default(config.initial_tokens)
+                .validate_with(|input: &usize| {
+                    if *input >= 1000 && *input <= 1_000_000 {
+                        Ok(())
+                    } else {
+                        Err("Must be between 1,000 and 1,000,000")
+                    }
+                })
+                .interact_text()?;
+                
+            config.final_tokens = dialoguer::Input::<usize>::with_theme(&ColorfulTheme::default())
+                .with_prompt("Final tokens (after refinement)")
+                .default(config.initial_tokens / 2)
+                .validate_with(|input: &usize| {
+                    if *input >= 500 && *input <= config.initial_tokens {
+                        Ok(())
+                    } else {
+                        Err("Must be between 500 and initial tokens")
+                    }
+                })
+                .interact_text()?;
+        }
+        _ => {
+            // Predefined option
+            if let Some((initial, final_t)) = data_size_options[data_idx].2 {
+                config.initial_tokens = initial;
+                config.final_tokens = final_t;
+            }
+        }
+    }
+    
+    // Show estimated time
+    let estimated_time = estimate_generation_time(config.initial_tokens, use_ollama);
+    println!("\n{}", format!("Estimated data generation time: {}", estimated_time).bright_yellow());
     
     // Data generation method selection
     println!("\n{}", "Select data generation method:".bright_cyan());

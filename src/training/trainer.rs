@@ -13,6 +13,7 @@ use crate::data::{DataGenerationMethod, DataGenerator, DataRefiner, TextDataset}
 use crate::io::json;
 use crate::model::GPT;
 use crate::tokenizer::GPT2Tokenizer;
+use crate::utils::FolderNameBuilder;
 
 /// Run the full training pipeline
 pub async fn run_full_pipeline(
@@ -101,12 +102,24 @@ pub async fn run_full_pipeline(
     // Save everything
     println!("\n{}", "[Step 7/7] Saving model and dataset".bright_green());
     
-    // Create folder name
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let folder_name = format!("{}_{}", 
-        prompt.chars().take(30).collect::<String>().replace(" ", "_").to_lowercase(),
-        timestamp
-    );
+    // Create folder name using FolderNameBuilder
+    let folder_name_builder = FolderNameBuilder::new();
+    
+    // Extract preset English name if using Ollama with known models
+    let preset_en = match &generation_method {
+        DataGenerationMethod::Ollama { gen_model, .. } => {
+            // Check if it's a known preset-like model
+            match gen_model.as_str() {
+                "codellama" => Some("code_assistant"),
+                _ if prompt.contains("recipe") || prompt.contains("レシピ") => Some("recipe_generator"),
+                _ if prompt.contains("poetry") || prompt.contains("詩") => Some("poetry_creator"),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    
+    let folder_name = folder_name_builder.generate(prompt, preset_en);
     let folder_path = output_dir.join(&folder_name);
     
     // Create directory
@@ -193,7 +206,7 @@ pub async fn run_full_pipeline(
         folder_path.join("generation_info.json"),
         prompt,
         &domain,
-        None,
+        preset_en,  // プリセット情報を渡す
         &config.model_size.to_string(),
         config,
         data_stats,

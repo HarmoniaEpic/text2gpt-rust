@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use colored::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -29,7 +29,7 @@ pub struct InstalledModel {
 }
 
 /// モデルカテゴリ
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModelCategory {
     General,      // 汎用モデル
     Technical,    // 技術/コード特化

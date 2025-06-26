@@ -14,7 +14,7 @@ mod tokenizer;
 mod training;
 mod utils;
 
-use crate::config::{Config, ModelSize, OllamaTimeoutPreset, OllamaTimeouts};
+use crate::config::{Config, ModelSize, OllamaTimeoutPreset};
 use crate::data::generator::DataGenerationMethod;
 use crate::utils::{
     check_ollama_running, get_installed_models, format_model_list_for_display,
@@ -589,11 +589,11 @@ fn interactive_generate(
     println!("\n{}", "Select dataset size:".bright_cyan());
     let data_size_options = vec![
         ("Recommended", format!("{} → {} tokens", config.initial_tokens, config.final_tokens), None),
-        ("Quick test", "10,000 → 5,000 tokens - Very fast, lower quality", Some((10_000, 5_000))),
-        ("Light", "20,000 → 10,000 tokens - Fast training", Some((20_000, 10_000))),
-        ("Standard", "50,000 → 25,000 tokens - Good balance", Some((50_000, 25_000))),
-        ("High quality", "100,000 → 50,000 tokens - Better results", Some((100_000, 50_000))),
-        ("Custom", "Specify custom token counts", None),
+        ("Quick test", "10,000 → 5,000 tokens - Very fast, lower quality".to_string(), Some((10_000, 5_000))),
+        ("Light", "20,000 → 10,000 tokens - Fast training".to_string(), Some((20_000, 10_000))),
+        ("Standard", "50,000 → 25,000 tokens - Good balance".to_string(), Some((50_000, 25_000))),
+        ("High quality", "100,000 → 50,000 tokens - Better results".to_string(), Some((100_000, 50_000))),
+        ("Custom", "Specify custom token counts".to_string(), None),
     ];
     
     let data_descriptions: Vec<String> = data_size_options.iter()

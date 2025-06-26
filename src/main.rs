@@ -12,6 +12,7 @@ mod io;
 mod model;
 mod tokenizer;
 mod training;
+mod utils;
 
 use crate::config::{Config, ModelSize, OllamaTimeoutPreset, OllamaTimeouts};
 use crate::data::generator::DataGenerationMethod;
@@ -146,7 +147,7 @@ enum Commands {
     },
 }
 
-// Category definitions
+// Category definitions with preset information
 const CATEGORIES: &[(&str, &str, &str)] = &[
     ("cooking", "🍳 Cooking & Recipes", "Generate cooking recipes and food descriptions"),
     ("poetry", "✍️ Poetry & Creative", "Create poetic and creative texts"),
@@ -154,32 +155,121 @@ const CATEGORIES: &[(&str, &str, &str)] = &[
     ("general", "📝 General Purpose", "General-purpose text generation"),
 ];
 
-// Preset definitions for each category
-fn get_presets(category: &str) -> Vec<(&str, &str)> {
+// Enhanced preset structure with English names
+#[derive(Clone)]
+struct PresetInfo {
+    title: &'static str,
+    title_en: &'static str,  // English name for folder naming
+    prompt: &'static str,
+    description: &'static str,
+}
+
+// Preset definitions for each category with English names
+fn get_presets(category: &str) -> Vec<PresetInfo> {
     match category {
         "cooking" => vec![
-            ("Simple home cooking recipes", "Generate easy and delicious home cooking recipes"),
-            ("Professional chef assistant", "Provide advanced cooking techniques and recipes"),
-            ("Healthy diet recipes", "Generate healthy and nutritious recipes"),
-            ("Desserts specialist", "Specialize in sweets and dessert recipes"),
+            PresetInfo {
+                title: "Simple home cooking recipes",
+                title_en: "simple_cooking_recipes",
+                prompt: "Generate easy and delicious home cooking recipes",
+                description: "Provides easy-to-follow recipes for everyday meals",
+            },
+            PresetInfo {
+                title: "Professional chef assistant",
+                title_en: "professional_chef_assistant",
+                prompt: "Provide advanced cooking techniques and recipes",
+                description: "Advanced culinary techniques and gourmet recipes",
+            },
+            PresetInfo {
+                title: "Healthy diet recipes",
+                title_en: "healthy_diet_recipes",
+                prompt: "Generate healthy and nutritious recipes",
+                description: "Focus on nutrition and balanced meals",
+            },
+            PresetInfo {
+                title: "Desserts specialist",
+                title_en: "desserts_specialist",
+                prompt: "Specialize in sweets and dessert recipes",
+                description: "Cakes, cookies, and various desserts",
+            },
         ],
         "poetry" => vec![
-            ("Modern poetry generator", "Create contemporary and expressive poetry"),
-            ("Haiku master", "Generate traditional Japanese poetry forms"),
-            ("Story creator", "Create short stories and narratives"),
-            ("Songwriter", "Write emotional and creative song lyrics"),
+            PresetInfo {
+                title: "Modern poetry generator",
+                title_en: "modern_poetry_generator",
+                prompt: "Create contemporary and expressive poetry",
+                description: "Free verse and modern poetic styles",
+            },
+            PresetInfo {
+                title: "Haiku master",
+                title_en: "haiku_master",
+                prompt: "Generate traditional Japanese poetry forms",
+                description: "5-7-5 and other traditional forms",
+            },
+            PresetInfo {
+                title: "Story creator",
+                title_en: "story_creator",
+                prompt: "Create short stories and narratives",
+                description: "Imaginative storytelling and narratives",
+            },
+            PresetInfo {
+                title: "Songwriter",
+                title_en: "songwriter",
+                prompt: "Write emotional and creative song lyrics",
+                description: "Lyrics for various music genres",
+            },
         ],
         "technical" => vec![
-            ("Programming explainer", "Explain programming concepts clearly"),
-            ("API documentation writer", "Create technical specifications and docs"),
-            ("Algorithm specialist", "Explain algorithms and data structures"),
-            ("System architect", "Describe system design and architecture"),
+            PresetInfo {
+                title: "Programming explainer",
+                title_en: "programming_explainer",
+                prompt: "Explain programming concepts clearly",
+                description: "Clear explanations of coding concepts",
+            },
+            PresetInfo {
+                title: "API documentation writer",
+                title_en: "api_documentation_writer",
+                prompt: "Create technical specifications and docs",
+                description: "Professional technical documentation",
+            },
+            PresetInfo {
+                title: "Algorithm specialist",
+                title_en: "algorithm_specialist",
+                prompt: "Explain algorithms and data structures",
+                description: "Computer science fundamentals",
+            },
+            PresetInfo {
+                title: "System architect",
+                title_en: "system_architect",
+                prompt: "Describe system design and architecture",
+                description: "Large-scale system design patterns",
+            },
         ],
         "general" => vec![
-            ("Daily conversation assistant", "Generate friendly casual conversations"),
-            ("Business writer", "Create professional business documents"),
-            ("Education support", "Provide clear educational explanations"),
-            ("News summarizer", "Summarize news and information concisely"),
+            PresetInfo {
+                title: "Daily conversation assistant",
+                title_en: "daily_conversation_assistant",
+                prompt: "Generate friendly casual conversations",
+                description: "Natural everyday dialogue",
+            },
+            PresetInfo {
+                title: "Business writer",
+                title_en: "business_writer",
+                prompt: "Create professional business documents",
+                description: "Formal business communication",
+            },
+            PresetInfo {
+                title: "Education support",
+                title_en: "education_support",
+                prompt: "Provide clear educational explanations",
+                description: "Learning assistance across subjects",
+            },
+            PresetInfo {
+                title: "News summarizer",
+                title_en: "news_summarizer",
+                prompt: "Summarize news and information concisely",
+                description: "Extract key points efficiently",
+            },
         ],
         _ => vec![],
     }
@@ -373,7 +463,7 @@ fn interactive_generate(
     // Preset or custom
     let presets = get_presets(category_key);
     let mut preset_names: Vec<String> = presets.iter()
-        .map(|(name, desc)| format!("{} - {}", name, desc))
+        .map(|p| format!("{} - {}", p.title, p.description))
         .collect();
     preset_names.push("✏️ Custom prompt".to_string());
     
@@ -384,13 +474,15 @@ fn interactive_generate(
         .items(&preset_names)
         .interact()?;
     
-    let prompt = if preset_idx < presets.len() {
-        presets[preset_idx].0.to_string()
+    let (prompt, preset_en) = if preset_idx < presets.len() {
+        let preset = &presets[preset_idx];
+        (preset.prompt.to_string(), Some(preset.title_en))
     } else {
         println!("\n{}", "Enter your custom prompt:".bright_cyan());
-        dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
+        let custom_prompt = dialoguer::Input::<String>::with_theme(&ColorfulTheme::default())
             .with_prompt("Prompt")
-            .interact_text()?
+            .interact_text()?;
+        (custom_prompt, None)
     };
     
     // Epoch selection
@@ -498,9 +590,10 @@ fn interactive_generate(
         (ollama_gen_model.clone(), ollama_refine_model.clone())
     };
     
-    // Generate the model
-    generate_model(
+    // Generate the model with preset English name
+    generate_model_with_preset(
         &prompt,
+        preset_en,
         &config,
         &output_dir,
         use_ollama,
@@ -513,6 +606,26 @@ fn interactive_generate(
 
 fn generate_model(
     prompt: &str,
+    config: &Config,
+    output_dir: &PathBuf,
+    use_ollama: bool,
+    ollama_gen_model: &str,
+    ollama_refine_model: &str,
+) -> Result<()> {
+    generate_model_with_preset(
+        prompt,
+        None,
+        config,
+        output_dir,
+        use_ollama,
+        ollama_gen_model,
+        ollama_refine_model,
+    )
+}
+
+fn generate_model_with_preset(
+    prompt: &str,
+    preset_en: Option<&str>,
     config: &Config,
     output_dir: &PathBuf,
     use_ollama: bool,

@@ -1,7 +1,12 @@
-# Use buildable branch
-https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
+# ⚠️ Looking for a buildable version?
 
-Sometimes, main branch may not buildable.
+**For general use**: https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
+
+This repository adopts an **AI pair programming optimized** structure:
+- `main` branch: Experimental code for interactive development with AI assistants like Claude (build not guaranteed)
+- `buildable` branch: Always buildable, stable version
+
+This strategy maintains a fluid development experience with AI while providing stable code to end users.
 
 # Text2GPT1-Rust 🦀
 

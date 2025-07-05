@@ -1,3 +1,7 @@
+# Japanese README is here / 日本語 README はこちら
+
+[README.md](./README.md)
+
 # ⚠️ Looking for a buildable version?
 
 **For general use**: https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable

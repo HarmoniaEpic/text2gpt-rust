@@ -2,11 +2,14 @@
 
 [README.en.md](./README.en.md)
 
-# buildable ブランチを使用して下さい / Use buildable branch
+# ⚠️ ビルド可能なバージョンをお探しの方へ
+**通常利用**: https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
 
-https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
+本リポジトリは**AIペアプログラミングに最適化**された構成を採用しています：
+- `main`ブランチ: Claude等のAIと対話的に開発するための実験的コード（ビルド保証なし）
+- `buildable`ブランチ: 常にビルド可能な安定版
 
-メインブランチは時折ビルド出来ない場合があります。 / Sometimes, main branch may not buildable.
+この戦略により、AIとの流れるような開発体験を維持しながら、エンドユーザーには安定したコードを提供しています。
 
 # Text2GPT1-Rust 🦀
 

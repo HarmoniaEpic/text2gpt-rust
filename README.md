@@ -1,6 +1,6 @@
-# 工事中 / Under Construction
+# buildable ブランチを使用して下さい / Use buildable branch
 
-動かないかもしれません。 / It may not work.
+
 
 # Text2GPT1-Rust 🦀
 

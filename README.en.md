@@ -387,7 +387,3 @@ cargo build --release --target x86_64-unknown-linux-musl  # Static binary
 - **Linux**: Static musl builds for maximum compatibility
 - **GPU Version**: AppImage format for library management
 - **Cross-platform**: Standard dynamic linking for Windows/macOS
-
----
-
-**Note**: This is an active development project. For the latest updates, check the `buildable` branch.

@@ -21,7 +21,7 @@ Generate custom GPT models tailored to specific behaviors from prompts - Rust + 
 
 ## 🌟 Overview
 
-Text2GPT1-Rust is a tool that automatically creates GPT-1 scale language models specialized for user-specified prompts (e.g., "A fun GPT that generates cooking recipes"). This is a complete Rust + Candle reimplementation of the Python Text2GPT1 prototype, achieving better performance and memory efficiency.
+Text2GPT1-Rust is a tool that automatically creates GPT-1 scale language models specialized for user-specified prompts (e.g., "A fun GPT that generates cooking recipes"). This is a complete Rust + Candle reimplementation of [the Python Text2GPT1 prototype](./text2gpt1.py), achieving better performance and memory efficiency.
 
 ### Key Features
 

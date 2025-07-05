@@ -1,6 +1,6 @@
 # buildable ブランチを使用して下さい / Use buildable branch
 
-https://github.com/HarmoniaEpic/text2gpt-rust/buildable/
+[https://github.com/HarmoniaEpic/text2gpt-rust/buildable/](https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable)
 
 # Text2GPT1-Rust 🦀
 

@@ -1,3 +1,7 @@
+# English README is here.
+
+[README.en.md](./README.en.md)
+
 # buildable ブランチを使用して下さい / Use buildable branch
 
 https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable

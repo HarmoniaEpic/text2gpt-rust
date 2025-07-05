@@ -2,6 +2,8 @@
 
 https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
 
+メインブランチは時折ビルド出来ない場合があります。 / Sometimes, main branch may not buildable.
+
 # Text2GPT1-Rust 🦀
 
 プロンプトから特定の性質を持つGPTモデルを自動生成するツール - Rust + Candle実装版

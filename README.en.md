@@ -1,3 +1,8 @@
+# Use buildable branch
+https://github.com/HarmoniaEpic/text2gpt-rust/tree/buildable
+
+Sometimes, main branch may not buildable.
+
 # Text2GPT1-Rust 🦀
 
 Generate custom GPT models tailored to specific behaviors from prompts - Rust + Candle implementation
